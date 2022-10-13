@@ -1031,7 +1031,7 @@ fviz_screeplot(onze_pca)
 
 We have a PCs along the x axis, and the percentage of variance they explain
 along the y-axis. This plot only shows the first 10 PCs.^[There are 20 PCs in
-total.PCA will produce as many PCs as there are variables or observations
+total. PCA will produce as many PCs as there are variables or observations
 (whichever number is smaller).] Our first PC explains around 17% of the variance
 in the data. This is more than we would expect if each variable were covering an
 equal amount of the variance in the data. If the variance were evenly split
@@ -1054,8 +1054,8 @@ onze_pca$sdev^2 / sum(onze_pca$sdev^2) * 100
 These values in the output above correspond to the percentages given in the
 scree plot above.
 
-As we saw above, PCA generates `loadings', which tell us how the original 
-variables relate to the PCs and `scores' which situate each observation
+As we saw above, PCA generates 'loadings', which tell us how the original 
+variables relate to the PCs and 'scores' which situate each observation
 with respect to the PCs. We can access there from the output of `prcomp`
 using `$rotation` for the loadings and `$x` for the scores.
 
