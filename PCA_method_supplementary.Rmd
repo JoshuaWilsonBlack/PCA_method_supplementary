@@ -1,0 +1,2368 @@
+---
+title: "Using Principal Component Analysis to explore co-variation of vowels."
+author: "Joshua Wilson Black<sup>1</sup>, Jen Hay<sup>1,2</sup>, Lynn Clark<sup>1,2</sup>, & James Brand<sup>3</sup>.<br/><br/><sup>1</sup>New Zealand Institute for Language, Brain and Behaviour, Univeristy of Canterbury, NZ<br> <sup>2</sup>Department of Linguistics, Univeristy of Canterbury, NZ<br><sup>3</sup>Institute of Czech Language and Theory of Communication, Charles University, CZ<br/><br/>Corresponding author: Joshua Wilson Black<br/>Email: joshua.black@canterbury.ac.nz<br/>Website: https://joshua.wilsonblack.nz"
+date: "2022-09-12"
+output:
+  bookdown::html_document2:
+    fig_caption: true
+    toc: true
+    toc_float: true
+    theme: flatly
+    collapsed: no
+    df_print: paged
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Overview
+
+This RMarkdown presents all code used in the article 'Using Principal Component
+Analysis to explore co-variation of vowels' and additional discussion.
+Throughout, we use data from the [ONZE corpus](https://www.canterbury.ac.nz/nzilbb/research/onze/).
+
+Section One covers the toy example used to present PCA. We take three variables
+with known interrelations: the mean raw F1 values of <span style="font-variant: small-caps;">dress</span>,
+<span style="font-variant: small-caps;">kits</span>, and <span style="font-variant: small-caps;">trap</span>.
+These values are taken from a sample of 100 speakers from the ONZE corpus. By
+looking at _three_ variables, we can visualise the entire process. By looking at
+three variables _with known relationships_, we can be confident in our
+interpretation of our PCA analysis.
+
+Section Two provides a standalone variant of the analysis carried out in
+[Brand et al. (2021)](https://www.sciencedirect.com/science/article/pii/S0095447021000711).
+The details of the implementation and models have been slightly changed to
+enable faster computation.^[
+For full details of the analysis of Brand et al., see the original paper and 
+the supplementary analysis file available athttps://nzilbb.github.io/Covariation_monophthongs_NZE/Covariation_monophthongs_analysis.html and
+on the .
+] 
+Unlike the analysis as it first appears in Brand et
+al. (2021),  the version of the analysis presented here is carried out with
+generalisation at the front of mind. In particular, we will go into detail
+regarding the three core questions asked of any PCA analysis:
+
+1. Is PCA appropriate?
+2. How many PCs should we consider?
+3. Which variables should we use to interpret our PCs?
+
+Throughout, we use functions from the package [`nzilbb.vowels`](https://github.com/JoshuaWilsonBlack/nzilbb_vowels).
+These functions are designed to apply to any vowel data to which PCA might be
+applied. The code in `nzilbb.vowels` is designed to generalise the methods used
+in Brand et al. (2021) and Wilson Black et al. (under review). The code for 
+the various functions can be found at the GitHub link above and, if desired,
+can be directly copied from there if one wishes to modify it and avoid using
+the `nzilbb.vowels` package directly.^[
+In the course of putting together `nzilbb.vowels`, we have attempted to stick
+as closely as possible to what the code would look like outside of a package.
+The main difference is the addition of `.data`. This is a way of making it 
+explicit that variable names come from a particular data frame rather than the
+general environment. They can simply be removed if the code is take outside of 
+the package, but it won't do any harm to keep them in.
+] If you use code from the package for this kind of analysis, please
+cite this paper and Brand et al. (2021).
+
+**NB:** Running this RMarkdown will require around 3GB of RAM.
+
+We will use the following packages:
+``` {r, message=FALSE}
+# We're working in the tidyverse 'dialect'.
+library(tidyverse)
+
+# Used for plots.
+library(ggrepel)
+library(scales)
+library(glue)
+
+# Factoextra used for PCA visualisation
+library(factoextra)
+
+# nzilbb.vowels used to share the data and some useful functions.
+# Install via github using following commented line. If this does not work,
+# ensure that you have the package `remotes` installed.
+# remotes::install_github('https://github.com/JoshuaWilsonBlack/nzilbb_vowels')
+library(nzilbb.vowels)
+
+# We will fit GAMM models as part of our preprocessing example
+library(mgcv)
+library(itsadug)
+
+# Plotly for 3D visualisation
+library(plotly)
+
+# File path management
+library(here)
+```
+
+The following is the details of the R installataion and environment used to knit
+this markdown:
+``` {r}
+sessionInfo()
+```
+
+# Data
+
+Before turning to PCA, it's worth explaining our data a little further.
+The data we are working with come from the Origins of New Zealand English
+project (ONZE) (Gordon et al. 2004, 2007). The ONZE corpus provides the longest
+record of New Zealand English (NZE) speech recordings in existence, with
+speakers born over a 137-year time period (1851-1988). The speech samples
+themselves were collected during oral history interviews and sociolinguistic
+interviews. The combined corpora contain speech data from over 600 different
+speakers from different social backgrounds, ethnic groups and geographical
+locations in New Zealand’s South Island. This paper takes processed data from
+Brand et al. 2021, which, after filtering, includes 481 speakers (225 female,
+256 male), born between 1864 and 1982).
+
+There is extensive evidence to suggest that some of the
+vowels of NZE may well show patterns of co-variation over time. The three short
+front vowels <span style="font-variant: small-caps;">trap</span>,
+<span style="font-variant: small-caps;">dress</span> and 
+<span style="font-variant: small-caps;">kit</span> have all changed their place of articulation in
+NZE, such that there are now two front vowels which have both raised and fronted
+(<span style="font-variant: small-caps;">trap</span> and <span style="font-variant: small-caps;">dress</span>) and one centralized vowel (<span style="font-variant: small-caps;">kit</span>) (Langstrof, 2006). This series
+of vowel changes is an example of a push chain (Hay et al., 2015), and is one
+place where we might expect to find systematic covariation.
+
+Formant values for the monophthongs were automatically extracted by Brand et al.
+using Praat, resulting in comparable measurements across a coherent set of
+variables. The initial data set of raw formant measurements of the
+12 NZE monophthongs contained over 2 million tokens. This was only possible
+because the corpus is in the LaBB-CAT environment (Fromont & Hay 2008; 2012).
+
+Brand et al. then apply an extensive data filtering protocol at the token level
+in which a series of conditions were placed on the removal of individual vowel
+tokens from the data set (see Brand et al. 2021, supplementary material). FOOT
+was removed as its token count was insufficient for our pre-PCA modelling step
+(see below) and SCHWA was removed along with all unstressed tokens. This left 10
+monophthongs.
+
+Brand et al.'s filtering procedure ran as follows:
+
+1. Remove speakers with missing gender or year of birth information.
+2. Remove transcripts that are word lists (interview speech only).
+3. Remove tokens where Praat failed to extract F1 and F2.
+4. Remove tokens with F1 > 1000 Hz (likely errors).
+5. Remove vowel tokens with durations <= 0.01s or >= 3s (likely errors).
+6. Remove tokens with phonological length > 25 (likely errors).
+7. Remove tokens with a hesitation (affects pronunciation of vowels).
+8. Remove tokens where the word is not transcribed.
+9. Remove stopwords.^[
+Stopword list: 'a', 'ah', 'ahh', 'am', "an'", 'an', 'and', 'are', "aren't", 'as', 'at', 'aw', 'because', 'but', 'could', 'do', "don't", 'eh', 'for', 'from', 'gonna', 'had', 'has', 'have', 'he', "he's", 'her', 'high', 'him', 'huh', 'I', "I'll", "I'm", "I've", "I'd", 'in', 'into', 'is', 'it', "it's", 'its', 'just', 'mean', 'my', 'nah', 'not', 'of', 'oh', 'on', 'or', 'our', 'says', 'she', "she's", 'should', 'so', 'than', 'that', "that's", 'the', 'them', 'there', "there's", 'they', 'this', 'to', 'uh', 'um', 'up', 'was', "wasn't", 'we', 'were', 'what', 'when', 'which', 'who', 'with', 'would', 'yeah', 'you', "you've".
+]
+10. Remove unstressed vowel tokens.
+11. Outlier removal (+- 2.5 SD).
+12. Removal of <span style="font-variant: small-caps;">foot</span> tokens (insufficient data).
+13. Removal of speakers for whom all vowels heavily overlap (likely errors).
+14. Removal of speakers who do not have 5 tokens for each remaining vowel.
+15. Removal of tokens with 'l' or 'r' as following segment (standard for NZE).
+16. Removal of speakers at the very ends of the year of birth distribution.
+
+We do not go into detail about these steps here as there is nothing special 
+about them _in connection with PCA_. They are part of the tool kit of work with
+large audio corpora and of statistical modelling in general.^[
+Interested readers are directed to the [filtering supplementary from Brand et al. 2021](https://nzilbb.github.io/Covariation_monophthongs_NZE/Covariation_monophthongs_filtering_anon.html),
+for the implementation of these steps and more detail concerning their rationale.
+]
+
+Figure \@ref(fig:speaker-counts) depicts the count of speakers in the filtered
+data by year of birth and gender. (This plot is **Figure 1** of the main 
+paper.)
+``` {r speaker-counts, fig.cap = "ONZE speakers by year of birth and gender."}
+figure_1 <- onze_vowels_full %>%
+  group_by(speaker) %>%
+  summarise(
+    yob = first(yob),
+    gender = first(gender)
+  ) %>%
+  ggplot(
+    aes(
+      x = yob,
+      fill = gender
+    )
+  ) +
+  geom_histogram(bins = 50) +
+  labs(
+    title = "Speakers by Year of Birth and Gender",
+    x = "Year of birth",
+    y = "Count of speakers",
+    fill = "Gender"
+  ) +
+  scale_fill_manual(values = c("#f1a340", "#998ec3"))
+
+ggsave(
+  here('plots', 'figure_1.png'), 
+  figure_1, 
+  dpi = 300, 
+  width = 160, 
+  height = 100,
+  units = "mm"
+)
+figure_1
+```
+
+# PCA explainer
+
+_This section provides the initial example to explain PCA in the paper._
+
+We begin by extracting the raw F1 values of <span style="font-variant:
+small-caps;">dress</span>, <span style="font-variant: small-caps;">kits</span>,
+and <span style="font-variant: small-caps;">trap</span> from a pre-generated
+random sample of speakers from the ONZE corpus, with 50 born before 1920 and
+50 born after 1920. 
+
+The following code loads the data for this subset of 100 speakers from the
+`nzilbb.vowels` package (which includes the dataset `onze_vowels`). It
+selects the vowels which we will consider and the useful columns (to see
+what the `onze_vowels` dataset looks like before we remove information just
+type `onze_vowels` into the console and press enter).^[This assumes that you
+are using RStudio to view this document.]
+The code block then calculates the mean first formant value for each speaker.
+``` {r}
+# Load ONZE data for 100 speakers, take only DRESS KIT and TRAP.
+onze_sub <- onze_vowels %>%
+  filter(
+    vowel %in% c("DRESS", "KIT", "TRAP") 
+  ) %>%
+  select(
+    speaker, vowel, F1_50, yob, gender
+  ) %>%
+  # Take means of first formant data
+  group_by(
+    speaker, vowel
+  ) %>%
+  summarise(
+    F1_50 = mean(F1_50),
+    yob = first(yob),
+    gender = first(gender)
+  ) %>%
+  ungroup()
+
+onze_sub
+```
+
+The output above shows that there is a row for each vowel and speaker. That is,
+there are three rows for each speaker. However, PCA requires a column for each
+variable we are interested in. So we pivot our data so there is a column for
+each of the three included vowels.
+``` {r}
+onze_to_pca <- onze_sub %>%
+  pivot_wider(
+    names_from = vowel,
+    values_from = F1_50
+  )
+```
+
+At this point we can plot the data, using colour to represent
+the third dimension. That is, <span style="font-variant: small-caps;">dress</span>
+and <span style="font-variant: small-caps;">trap</span> are represented by
+the $x$ and $y$ axes, respectively, while <span style="font-variant: small-caps;">kit</span>
+is represented by shade of blue, with darker blues indicating lower values and
+lighter blues representing higher values.
+``` {r toy-2d, fig.cap = 'Midpoint first formant values for DRESS, KIT and TRAP.'}
+three_vowel_plot <- onze_to_pca %>%
+  ggplot(
+    aes(
+      x = DRESS,
+      y = TRAP,
+      colour = KIT
+    )
+  ) +
+  geom_point() +
+  labs(
+    title = "First Formant Values",
+    x = "DRESS (Hz)",
+    y = "TRAP (Hz)",
+    colour = "KIT (Hz)"
+  )
+
+three_vowel_plot
+```
+
+Figure \@ref(fig:toy-2d) is a representation of a 3D cloud of
+points. As explained in the paper, PCA can be thought of as placing a point at
+the centre of the cloud, and then drawing lines through the cloud, passing
+through the central point, which successively capture the largest possible
+amount of variance in the cloud with each line at right angles to the previous
+line. The lines are what we call principal components (PCs). If you find it hard
+to interpret the use of colour in this plot, scroll down for an interactive 
+3D scatter plot of the same data which does not require the use of colour.
+
+To show this visually, we will run a PCA analysis using R and plot the results.
+We won't pause over the details of the code here as it will be explained in 
+more detail in the following section.
+
+We run the PCA analysis using the base `prcomp` function. In this case,
+we're not scaling the data, because I want to show what PCA looks like in the
+original cloud of points. **NB:** in almost all situations the `scale` argument
+to `prcomp` should be set to `TRUE`.^[The reason we do not scale for this example
+is that we are trying to visualise PCA in a cloud of points which is as close as possible
+to the raw data. Introduction of extra processing steps hinders this.]
+
+``` {r}
+# Running PCA
+onze_pca <- prcomp(
+  # Only select the numeric columns which you want to feed into the PCA.
+  onze_to_pca %>% select(DRESS, KIT, TRAP),
+  scale=FALSE
+)
+```
+
+We then extract the required information from the PCA analysis to plot the 
+results. Again, we will discuss how to extract this information in more detail
+in the following section.
+``` {r}
+# Load scores for individuals (contained in onze_pca$x)
+onze_to_pca <- onze_to_pca %>%
+  mutate(
+    PC1 = onze_pca$x[, 1],
+    PC2 = onze_pca$x[, 2]
+  )
+
+# Extract centre of the point cloud.
+pca_centre <- onze_pca$center
+
+centre_data <- tibble(
+  "DRESS" = pca_centre[[1]],
+  "KIT" = pca_centre[[2]],
+  "TRAP" = pca_centre[[3]]
+)
+
+# Extract loadings.
+pca_loadings <- onze_pca$rotation
+
+# Use the loadings and centre to find where each point sits along PC1 and PC2
+# when represented in the original 3D space.
+onze_to_pca <- onze_to_pca %>%
+  mutate(
+    PC1_DRESS = (PC1 * pca_loadings[1, 1]) + pca_centre[[1]],
+    PC1_KIT = (PC1 * pca_loadings[2, 1]) + pca_centre[[2]],
+    PC1_TRAP = (PC1 * pca_loadings[3, 1]) + pca_centre[[3]],
+    PC2_DRESS = (PC2 * pca_loadings[1, 2]) + pca_centre[[1]],
+    PC2_KIT = (PC2 * pca_loadings[2, 2]) + pca_centre[[2]],
+    PC2_TRAP = (PC2 * pca_loadings[3, 2]) + pca_centre[[3]],
+  )
+```
+
+We plot the centre of the point cloud:
+``` {r toy-centre, fig.cap='Midpoint first formant values for DRESS, KIT and TRAP with centre of point cloud.'}
+centre_plot <- onze_to_pca %>%
+  ggplot(
+    aes(
+      x = DRESS,
+      y = TRAP,
+      colour = KIT
+    )
+  ) +
+  geom_point() +
+  geom_point(data = centre_data, size = 10, shape = 4, stroke = 2) +
+  labs(
+    title = "Centre of Point Cloud",
+    x = "DRESS (Hz)",
+    y = "TRAP (Hz)",
+    colour = "KIT (Hz)",
+    caption = "The centre of the point cloud is indicated by a cross."
+  )
+
+centre_plot
+```
+
+Figure \@ref(fig:toy-centre) shows an 'x' where the middle of the point cloud
+is. This is clear to see for the <span style="font-variant: small-caps;">dress</span>
+and <span style="font-variant: small-caps;">trap</span> axes. Take a moment to 
+convince yourself that the colour sits in the middle of the range of colours of
+the points for the <span style="font-variant: small-caps;">kit</span> variable.
+Don't worry if you can't discern fine differences in the shade of blue, for the
+purposes of this illustration all that is required is a sense of 'high', 'mid',
+and 'low' values.
+
+We now add the first and second PCs, using line type to visually distinguish
+them:
+``` {r toy-pcs, fig.cap = 'Midpoint first formant values for DRESS, KIT and TRAP with centre of point cloud and first two PCs.'}
+PC1_projections <-  onze_to_pca %>%
+  select(
+    speaker, PC1_DRESS, PC1_TRAP, PC1_KIT
+  ) %>%
+  rename(
+    DRESS = PC1_DRESS,
+    TRAP = PC1_TRAP,
+    KIT = PC1_KIT
+  )
+  
+PC2_projections <-  onze_to_pca %>%
+  select(
+    speaker, PC2_DRESS, PC2_TRAP, PC2_KIT
+  ) %>%
+  rename(
+    DRESS = PC2_DRESS,
+    TRAP = PC2_TRAP,
+    KIT = PC2_KIT
+  )
+
+PC_projections <- bind_rows(
+  "PC1" = PC1_projections,
+  "PC2" = PC2_projections,
+  .id = "PC"
+)
+
+pc_plot <- centre_plot +
+  geom_line(
+    aes(
+      x = DRESS,
+      y = TRAP,
+      colour = KIT,
+      size = PC,
+      group = PC
+    ),
+    data = PC_projections
+  ) +
+  scale_size_manual(
+    values = c(
+      "PC1" = 2,
+      "PC2" = 1
+    )
+  ) +
+  labs(
+    title = "First Two PCs",
+    caption = NULL
+  )
+
+pc_plot
+```
+
+Figure \@ref(fig:toy-pcs) might initially be a bit hard to interpret. We see
+that PC1 goes from low values of <span style="font-variant: small-caps;">dress, trap</span>, 
+and <span style="font-variant: small-caps;">kit</span>. This is easy to see for
+<span style="font-variant: small-caps;">dress</span> and <span style="font-variant: small-caps;">trap</span>.
+For <span style="font-variant: small-caps;">kit</span>, notice that the thicker
+line is dark blue at low values of <span style="font-variant: small-caps;">dress</span>
+and <span style="font-variant: small-caps;">trap</span> and light blue at high
+values of <span style="font-variant: small-caps;">dress</span> and <span style="font-variant: small-caps;">trap</span>.
+Dark blue indicates low values of <span style="font-variant: small-caps;">kit</span>,
+while light blue represents high values.
+
+The second PC, however, puts <span style="font-variant: small-caps;">kit</span>
+against <span style="font-variant: small-caps;">dress</span> and
+<span style="font-variant: small-caps;">trap</span>. This is easiest to see
+by noting that the light to dark blue pattern is the opposite of the pattern
+for PC1.
+
+The PCs represent new variables against which we can plot our data. We can
+reduce this 3D data to two dimensions by plotting the data with respect to PC1
+and PC2.
+``` {r toy-pc1-pc2, fig.cap="ONZE data for DRESS, TRAP, and KIT, plotted against PC1 and PC2."}
+two_dimm <- onze_to_pca %>%
+  ggplot(
+    aes(
+      x = PC1,
+      y = PC2
+    )
+  ) + 
+  geom_point() +
+  labs(
+    title = "2D Representation",
+  )
+
+two_dimm
+```
+
+Sometimes, plots like \@ref(fig:toy-pc1-pc2) allow for individuals to be
+visually clustered into distinct groups. This is the basis of use of PCA as a
+prepatory step for classification methods. There are no obvious clusters in the
+PC1 and PC2 plot for this this collection of individuals. However, even if there
+is no clear grouping, the plot can still be made useful with the addition of
+supplementary information (namely, information not fed to the PCA analysis), to
+aid in the interpretation of two PCs. For instance:
+
+``` {r toy-pc1-pc2-supp, fig.cap="ONZE data for DRESS, TRAP, and KIT, plotted against PC1 and PC2 with speaker gender and year of birth added as supplementary variables."}
+two_dim_supps <- onze_to_pca %>%
+  ggplot(
+    aes(
+      x = PC1,
+      y = PC2,
+      shape = gender,
+      colour = yob
+    )
+  ) + 
+  geom_point() +
+  labs(
+    title = "PCA Representation of DRESS, TRAP, and KIT F1 Data",
+    subtitle = "Supplementary variables: gender and year of birth."
+  )
+
+two_dim_supps
+```
+
+We will use the information in \@ref(fig:toy-pc1-pc2-supp), in a moment. But
+first, to interpret figures \@ref(fig:toy-pc1-pc2) and
+\@ref(fig:toy-pc1-pc2-supp), we need to know what the numbers along the PC axes
+mean with respect to the original variables. The way to do this is to look at
+the 'loadings' of the original variables for each PC. This information is
+extracted from the results of `prcomp` as follows:^[This information is **Table
+1** in the paper.]
+
+``` {r}
+onze_pca$rotation
+```
+
+The values for PC1, for each original variable are negative. These indicate
+that increases in PC1 correspond to across-the-board decreases in all of 
+the original variables. If we look at the column for PC2, we see negative
+values for <span style="font-variant: small-caps;">dress</span> and 
+<span style="font-variant: small-caps;">trap</span>, but not for 
+<span style="font-variant: small-caps;">kit</span>. This means that higher
+values of PC2 correspond to lower values for 
+<span style="font-variant: small-caps;">dress</span> and 
+<span style="font-variant: small-caps;">trap</span>, but higher values
+for <span style="font-variant: small-caps;">kit</span>.
+
+\@ref(fig:toy-pc1-pc2-supp) and \@ref(fig:toy-pcs), along with the loadings
+we have just considered, give us information which 
+allows us to interpret the PCs. Interpretation of PCs is, as the paper explains,
+vital for the use of PCA to explore vowel covariation.
+
+If high values of PC1 correspond to low first formant values for all vowels,
+then it stands to reason that PC1 is capturing something like vocal tract
+length. Speaker gender is an unreliable proxy for this, but a proxy nontheless.
+We see the preponderance of male speakers are at high PC1 levels --- i.e., the
+majority of male speakers are on the high side of PC1.
+
+PC2, on the other hand, pits <span style="font-variant: small-caps;">dress</span>
+and <span style="font-variant: small-caps;">trap</span> against 
+<span style="font-variant: small-caps;">kit</span>. It is well known in New
+Zealand English, that <span style="font-variant: small-caps;">trap</span>
+and <span style="font-variant: small-caps;">dress</span> has risen while
+<span style="font-variant: small-caps;">kit</span> has lowered.^[
+Keeping in mind that 'rising' is, in fact, a _lowering_ of frequency and
+vice versa.
+]
+PC2 seems to capture this variation. This is confirmed in 
+\@ref(fig:toy-pc1-pc2-supp), where we see that the speakers year of birth closely
+corresponds to their PC2 score. The later you are born, the higher your PC2 
+score.
+
+In a full research project, it is often useful to provide further evidence of a
+connection between PC scores and this or that additional variable. Here, any
+of the usual tools of statistical modelling can be used. For instance, we might
+fit a linear model of PC1 score by year of birth to confirm the relationship
+we set out visually above.
+
+So, we have seen how we go from 3D data from three distinct vowels to a 2D
+representation of the data in which the new dimensions are _interpretable_. This
+is, in small form, the benefit of PCA.
+
+For the purposes of the paper, we combine four the the above plots as a single
+plot using the `patchwork` package. This is **Figure 2** in the paper.
+``` {r, fig.dim = c(10, 10), fig.cap = "Figure 2 for paper."}
+figure_2 <- (three_vowel_plot + centre_plot) /
+  (pc_plot + fviz_screeplot(onze_pca, barcolor = "darkgreen", barfill = "darkgreen")) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+    title = "PCA Applied to NZE Short Front Vowel First Formants",
+    tag_levels = "A",
+    theme = theme(plot.title = element_text(size = 20))
+  )
+
+ggsave(
+  here('plots', 'figure_2.png'),
+  figure_2,
+  dpi = 500, 
+  width = 320, 
+  height = 200,
+  units = "mm"
+)
+figure_2
+```
+
+
+
+**Figure 3**, in the paper, will be the 2D representation of the data with and
+without supplementary variables:
+``` {r}
+figure_3 <- (two_dimm + labs(title = NULL)) + 
+  (two_dim_supps + labs(title = NULL, subtitle = NULL)) +
+  plot_annotation(
+    title = "PC1 and PC2 Representation of Data",
+    subtitle = "With and without supplementary variables.",
+    tag_levels = "A",
+    theme = theme(
+      plot.title = element_text(size = 20),
+      plot.subtitle = element_text(size = 15)
+    )
+  )
+
+ggsave(
+  here('plots', 'figure_3.png'),
+  figure_3,
+  dpi = 300, 
+  width = 320, 
+  height = 150,
+  units = "mm"
+)
+figure_3
+```
+
+Finally, we provide the code for a 3D interactive plot which enables one to
+visualise the steps carried out by PCA geometrically. This is a long code block,
+which is hidden by default. To view the code, press the 'Code' button. The
+resulting figure enables one to move around the point cloud, add the central
+point, and the first two PCs (use the box at the top right to show or hide
+these elements from the plot).
+``` {r 3d-fig, class.source='fold-hide'}
+# Visualisation
+
+fig_3d <- plot_ly(
+  data = onze_to_pca,
+  x = ~DRESS,
+  y = ~KIT,
+  z = ~TRAP,
+  type = "scatter3d", # What kind of plot.
+  mode = "markers", # What kind of marking (something like geom in ggplot)
+  name = "Speakers", # This label will go in the legend.
+  marker = list(
+    size = 2,
+    opacity = 1,
+    color = "gray",
+    lines = list(
+      color = 'black',
+      width = 1
+    ),
+    showlegend = FALSE
+  ),
+  hoverinfo = 'text',
+  text = ~paste0(
+    "DRESS: ", round(DRESS), " (Hz)<br>", 
+    "KIT: ", round(KIT), " (Hz)<br>", 
+    "TRAP: ", round(TRAP), " (Hz)" 
+  ),
+  projection = list(
+    x = list(
+      show = TRUE,
+      scale = 0.2
+    ),
+    y = list(
+      show = TRUE,
+      scale = 0.2
+    ),
+    z = list(
+      show = TRUE,
+      scale = 0.2
+    )
+  )
+)
+
+# Add title and axis labels
+fig_3d <- fig_3d %>%
+  layout(
+    scene = list(
+      xaxis = list(
+        title = "DRESS F1 (Hz)"
+      ),
+      yaxis = list(
+        title = "KIT F1 (Hz)"
+      ),
+      zaxis = list(
+        title = "TRAP F1 (Hz)"
+      )
+    ),
+    plot_bgcolor = 'rgba(0, 0, 0, 0)',
+    paper_bgcolor = 'rgba(0, 0, 0, 0)'
+  )
+
+fig_3d <- fig_3d %>%
+  # Add centre mark
+  add_trace(
+    x = ~DRESS,
+    y = ~KIT,
+    z = ~TRAP,
+    data = centre_data,
+    type = 'scatter3d',
+    mode = 'markers',
+    marker = list(
+      size = 6,
+      opacity = 1,
+      color = 'red',
+      symbol = "x"
+      ),
+    name = "Centre",
+    inherit = FALSE,
+    visible = "legendonly",
+    hoverinfo = 'text',
+    text = ~paste0(
+      "DRESS: ", round(DRESS), " (Hz)<br>", 
+      "KIT: ", round(KIT), " (Hz)<br>", 
+      "TRAP: ", round(TRAP), " (Hz)" 
+    )
+  ) %>%
+  # Add PC1 line
+  add_trace(
+    data = onze_to_pca,
+    x = ~PC1_DRESS,
+    y = ~PC1_KIT,
+    z = ~PC1_TRAP,
+    type = 'scatter3d',
+    mode = 'lines',
+    name = 'PC1',
+    line = list(
+      color = "#D55E00",
+      width = 6
+    ),
+    inherit = FALSE,
+    visible = "legendonly",
+    hoverinfo = 'text',
+    text = ~paste0(
+      "DRESS: ", round(PC1_DRESS), " (Hz)<br>", 
+      "KIT: ", round(PC1_KIT), " (Hz)<br>", 
+      "TRAP: ", round(PC1_TRAP), " (Hz)" 
+    )
+  ) %>%
+  # Add PC2 line.
+  add_trace(
+    data = onze_to_pca,
+    x = ~PC2_DRESS,
+    y = ~PC2_KIT,
+    z = ~PC2_TRAP,
+    type = 'scatter3d',
+    mode = 'lines',
+    name = 'PC2',
+    line = list(
+      color = "#0072B2",
+      width = 4
+    ),
+    inherit = FALSE,
+    visible = "legendonly",
+    hoverinfo = 'text',
+    text = ~paste0(
+      "DRESS: ", round(PC2_DRESS), " (Hz)<br>", 
+      "KIT: ", round(PC2_KIT), " (Hz)<br>", 
+      "TRAP: ", round(PC2_TRAP), " (Hz)" 
+    )
+  )
+
+fig_3d
+```
+
+# Case Study: Brand et al. 2021
+
+The following code repeats, with some modifications, the analysis of Brand et
+al. (2021).^[
+All data and analysis from Brand et al. (2021) can be found online either at the following GitHub repository: https://github.com/nzilbb/Covariation_monophthongs_NZE or at The Open Science Framework at: https://osf.io/q4j29/.
+Individual files can be accessed at https://nzilbb.github.io/Covariation_monophthongs_NZE/. We note, 
+in particular, the online version of the analysis supplementary https://nzilbb.github.io/Covariation_monophthongs_NZE/Covariation_monophthongs_analysis.html.
+]
+
+The analysis is divided into the following steps:
+
+1. data processing,
+2. application of PCA (including PCA tests), and
+3. interpretation of PCs.
+
+We use all 481 speakers for this analysis, rather than the sample of 100 used in
+our explanation of PCA above.
+
+## Data Processing
+
+_This section corresponds to the section 'Data processing and research_
+_questions' in the paper._
+
+For PCA to tell us anything interesting, we need to put in the right kind of 
+data. In the case of across-speaker changes in vowel shapes we are not 
+interested in changes due to difference in vocal tract length. For this reason,
+we apply a normalisation method to the data. The method is a modification of the
+Lobanov normalisation, changed to allow for differences in the proportion of
+tokens of each vowel. This means we can use Lobanov normalisation for
+naturalistic, rather than controlled laboratory recordings.
+
+We then take a step beyond normalisation, by fitting models to capture and then
+exclude known  sources of variation in vowel data. PCA should then help us to
+find vowel covariation which is not explained by known sources of variation.
+
+We'll take each step in turn.
+
+### Normalisation
+
+We use the Lobanov 2.0 normalisation, as developed in Brand et al. (2021).
+We give the formula here:
+$$
+\begin{equation}
+F_{lobanov_i} = \frac{(F_{raw_i}-\mu_{raw_i})}{\sigma_{raw_i}}
+\end{equation}
+$$
+
+Lobanov 2.0 is implemented in the R package `nzilbb.vowels`. The 
+function `lobanov_2` assumes that the first column contains
+speaker identifiers, the second column contains vowel identifiers, and the
+third and fourth columns contain, respectively, F1 and F2 data in Hertz.^[
+This matched the structure used in the `vowels` package.
+]
+We the apply function as follows:
+``` {r, message = FALSE}
+onze_vowels <- onze_vowels_full %>%
+  # Add F1_lob2 and F2_lob2 columns
+  lobanov_2() %>%
+  # Remove F1_50 and F2_50 columns
+  select(-(F1_50:F2_50))
+```
+
+### Modelling
+
+We want to fit models which capture the variation in the data which we are _not_
+interested in. We are looking for covariation which is _not_ 
+explained by changes in our predictor variables.
+Here we fit a distinct GAMM model to each vowel and formant pair
+which captures differences explicable by gender, by speech rate, and by the
+speaker's year of birth. We also fit a random intercept for each speaker and for
+each word. In order to speed up this process, we remove any
+words which have less than five tokens. This is not done by Brand et al. (2021).
+
+The models are here fit using the methods provided by `purrr`, the tidyverse
+package for functional programming.^[A blog post setting out this method step
+by step can be found 
+[here](https://joshua.wilsonblack.nz/post/visualising-vowel-space-gamms/).]
+Each model if fit using the `bam` function from `mgcv`, using the following
+formula: `formant_value ~ gender + s(yob, by=gender) + s(speech_rate) + s(speaker, bs="re") + s(word, bs = "re")`
+This is done separately for each vowel and formant. The smooths are fit using the
+default 10 knots. There is a parametric term for `gender`, and a distinct smooth
+is fit for each value of `gender`. This means that the two genders are fit 
+separately. Brand et al. (2021) represent the smooths using 'difference smooths'
+for `gender` rather than fitting two independent smooths. This introduces an
+unnecessary complication for our purposes here and will not affect the random
+intercepts which we intend to extract from these models at a later stage.^[
+Recall that this is not an explainer on GAMMs. For that, see the bibliography to 
+the paper.
+]
+
+``` {r, cache = TRUE}
+# Nest the data so that there is a single row for each model.
+onze_models <- onze_vowels %>%
+  pivot_longer(
+    cols = matches("F[1-2]"), # Select columns with formant data (assumes 
+    # there are only two of these)
+    names_to = "formant_type", # Name column to distinguish F1 & F2
+    values_to = "formant_value" # Name column for formant values.
+  ) %>%
+  group_by(vowel, formant_type) %>%
+  nest() %>%
+  ungroup()
+
+# For each dataset, remove words with less than five appearances.
+onze_models <- onze_models %>%
+  mutate(
+    data = map(
+      data,
+      ~ .x %>%
+        group_by(word) %>%
+        mutate(
+          n_occurrences = n()
+        ) %>%
+        filter(
+          n_occurrences >= 5
+        )
+    )
+  )
+
+# Fit GAMMS
+onze_models <- onze_models %>%
+  # For each vowel-formant pair, fit an lmer model.
+  mutate(
+    model = map( # map takes...
+      data, # ... each entry in a column, and ...
+      ~ bam( # applies a function to it.
+        formant_value ~ gender + s(yob, by=gender)
+        + s(speech_rate) + s(speaker, bs="re") + s(word, bs = "re"),
+        discrete = TRUE, nthreads = 16,
+        data = .x # where .x is a pronoun referring to the column entry.
+      )
+    )
+  )
+```
+
+We now have models for each vowel and formant pair. We can have a quick look 
+at the first of these models to illustrate what they look like.  
+This model is for the <span style="font-variant: small-caps;">`r onze_models$vowel[[1]]`</span> vowel's 
+`r onze_models$formant_type[[1]]` values.
+``` {r}
+summary(onze_models$model[[1]])
+```
+The GAMM output indicates we have a significant smooth over year of birth for
+both male and female speakers. We are also capturing a lot
+of variance with our smooths for each speaker and for each word.
+
+Let's see what the smooths look over year of birth (using the `plot_smooth` 
+function from `itsadug`:
+``` {r}
+plot_smooth(onze_models$model[[1]], view = "yob", plot_all = "gender", rug = T)
+```
+
+According to this model, at the start of our time period, men and women are
+distinguishable in the height of their 
+<span style="font-variant: small-caps;">thought</span> vowel at the start and
+end of our period, but are not distinguished in a period roughly from 1920 to
+1940. The rug at the bottom of the above plot indicates
+when our actual speakers were born.
+
+We now have 20 models. But we want to do PCA with _speakers_ as rows. For this,
+we need a matrix with a row for each speaker. What are the values in the
+matrix going to be?
+
+One option would be to get each model's _predictions_ for each speaker. This 
+would give us the variation _explained by_ the model predictors. But this is not
+what we want for our project.^[It _is_ a reasonable option for sociolinguistic
+investigation of vowels in which we want to fix our attention on a certain 
+kind of variation, decided upon in advance. This approach would be an extension of 
+'canonical correspondence analysis' or (CCA). For more about CCA in sociolinguistics
+see [Walker et al. (2022)](https://www.taylorfrancis.com/chapters/edit/10.4324/9781003134558-7/lect-coherence-phonetic-grammatical-variation-james-walker-michol-hoffman-miriam-meyerhoff).]
+We, instead, want the variation which is _not_ captured by these predictors.
+One way to get this is to extract the random intercepts which the model fits
+to each speaker. These are the model's way of capturing the left over variance
+introduced by each speaker, assuming that speakers come from a natural population
+of possible speakers.^[For an account of how this works with linear mixed
+models, see [Drager and Hay (2012)](https://www.proquest.com/docview/1008896594?parentSessionId=%2Fjqcqigo8JxO%2F4M%2BgKc3WbsiKKRPZTCzCaCOIm810zE%3D).]
+
+We pick out these random effects using the function `get_random()`
+from the package `itsadug`. After applying
+this function to each model, we can 'unnest' to get a single matrix with the
+random intercepts for each speaker, for each vowel, and for each formant
+type.
+``` {r}
+onze_models <- onze_models %>%
+  mutate(
+# For each model, extract random effects and turn them into a data frame
+    random_intercepts = map(
+      model,
+      ~ get_random(.x)$`s(speaker)` %>% as_tibble(rownames = "speaker") %>%
+        rename(intercept = value)
+    )
+  )
+
+# Select the vowel, formant type, and random intercepts columns and 'unnest'
+onze_ints <- onze_models %>%
+  select(vowel, formant_type, random_intercepts) %>%
+  unnest(random_intercepts)
+
+onze_ints
+```
+
+This isn't quite what we want, yet. The data is too 'long'. It needs to be 
+wider in the sense that we need a column for each vowel and formant type pair (
+i.e., we need a column for <span style="font-variant: small-caps;">thought</span>
+F1 and another for <span style="font-variant: small-caps;">thought</span> F2
+etc.
+).
+
+We widen the data as follows:
+
+``` {r}
+onze_ints <- onze_ints %>%
+  # Create a column to store our eventual column names
+  mutate(
+    # Combine the 'vowel' and 'formant_type' columns as a string.
+    vowel_formant = str_c(vowel, '_', formant_type),
+    # Remove '_lob2' for cleaner column names
+    vowel_formant = str_replace(vowel_formant, '_lob2', '')
+  ) %>%
+  # Remove old 'vowel' and 'formant_type' columns
+  select(-c(vowel, formant_type)) %>%
+  # Make data 'wider', by...
+  pivot_wider(
+    names_from = vowel_formant, # naming columns using 'vowel_formant'...
+    values_from = intercept # and values from intercept column
+  )
+
+onze_ints
+```
+
+
+## Application of PCA
+
+_This section corresponds to the section 'PCA' in the paper._
+
+We will begin by applying PCA and looking at its output before turning, more 
+seriously, to the answers to the three main questions we need to ask in 
+any PCA analysis:
+
+1. Is PCA appropriate for this data.
+2. How many PCs should we consider.
+3. Which variables should we use to interpret the PCs.
+
+Our data is in the required form for PCA: that is, it has rows for each
+observation (in our case, a single row for each speaker), and has values in
+each column (there are no missing values in our data).
+
+The base R function `prcomp` takes a matrix of numerical values. This means
+we need to remove our speaker identifiers from the data when we pass it to 
+`prcomp`.
+
+``` {r}
+onze_pca <- onze_ints %>%
+  # Remove the speaker column as this is not wanted by PCA.
+  select(-speaker) %>%
+  # We scale the variables (more on this in a moment)
+  prcomp(scale = TRUE)
+```
+
+It is usually recommended to scale the data (which we did not do in the 3D
+example above). If we don't scale the data, then those variables which have the
+largest variance will dominate.^[
+This is a bigger problem in applications where
+the data comes from variables which are one quite different scales. Say, for
+instance, that we added speaker age as a variable and didn't scale it. If we had
+even a small range of speaker ages, these would quickly dominate over Lobanov
+2.0 normalised vowel space data (where, e.g. the <span style="font-variant:
+small-caps;">thought</span> F1 values runs from  
+`r min(onze_models$data[[1]]$formant_value)` to 
+`r max(onze_models$data[[1]]$formant_value)`).
+]
+If you don't have a positive reason to leave the data unscaled, then ensure
+you add `scale=TRUE`. **NB:** variable scaling is not the default behaviour for
+`prcomp`. This is for backwards compatibility reasons.
+
+Often the first question about a PCA analysis is how much variance each of the
+PCs explains. PCA attempts to find new variables, the PCs, which explain, 
+successively, as much of the variance in the original data as possible. For
+that reason, we want our first few PCs to explain the majority of the variation
+in the data. We visualise the variance explained with a scree plot using the
+function `fviz_screeplot` from `factoextra`.
+``` {r}
+fviz_screeplot(onze_pca)
+```
+
+We have a PCs along the x axis, and the percentage of variance they explain
+along the y-axis. This plot only shows the first 10 PCs.^[There are 20 PCs in
+total.PCA will produce as many PCs as there are variables or observations
+(whichever number is smaller).] Our first PC explains around 17% of the variance
+in the data. This is more than we would expect if each variable were covering an
+equal amount of the variance in the data. If the variance were evenly split
+across the variables, we would expect them to all account for (1/20 = `r 1/20 *
+100`%) of the data. In fact, we see that the first few PCs all explain more than
+5% of the variance, while all the PCs after PC7 explain less than 5% of the
+variance in the data.
+
+The amount of variance explained by each PC is captured in the PCA object (i.e.,
+the output of `prcomp`) by `$sdev`. These are the square roots of the
+eigenvalues of the correlation matrix of the data. That is, we are picking out
+structure in the correlations which are present in the data. We turn these
+eigenvalues into percentages of variance explained by squaring the values and
+dividing each by the sum of the squared variables (and multiplying by 10).
+In R:
+``` {r}
+onze_pca$sdev^2 / sum(onze_pca$sdev^2) * 100
+```
+
+These values in the output above correspond to the percentages given in the
+scree plot above.
+
+As we saw above, PCA generates `loadings', which tell us how the original 
+variables relate to the PCs and `scores' which situate each observation
+with respect to the PCs. We can access there from the output of `prcomp`
+using `$rotation` for the loadings and `$x` for the scores.
+
+``` {r}
+onze_pca$rotation
+```
+The output above gives the loadings for all 20 PCs. Inspection of the first
+column reveals that <span style="font-variant: small-caps;">thought</span>
+ F2 is given the highest loading for PC1. 
+
+We can look at the first few scores too:
+``` {r}
+head(onze_pca$x)
+```
+This tells us where the individuals sit within the space defined by
+the principal components. So, individual 1 (the first row), has positive
+values for the first five PCs, but the magnitude of their PC scores is quite
+small compared to some other speakers (e.g. compare the PC1 value for the sixth
+row and the PC2 value for the speaker in the second row).
+
+For the purpose of illustration, let's look at a popular method for depicting
+loadings: the variable plot. This allows us to plot the original variables 
+within the space defined by any two of the PCs. The natural choice is to use
+the first two principle components. For this we use the function `fviz_pca_var`
+from `factoextra`.
+``` {r variable-plot, fig.cap = "Variable plot of PC1 and PC2."}
+fviz_pca_var(
+  onze_pca,
+  # top 10 variables by contribution to the PCs plotted
+  select.var = list(contrib = 15),
+  repel = TRUE # attempt to prevent label overlap
+)
+```
+
+Here we see PC1 along the x axis and PC2 along the y axis. Each label also tells
+us what proportion of the variance in the data these PCs explain (the same 
+information presented in the scree plot above). If two arrows point in opposite
+directions, they are patterned against each other in the space of these PCs,
+if they point in the same direction, then they are patterned with one another.
+The closer the arrows are to the circle, the better they are represented by 
+these two PCs. That is, if an arrow were to touch the circle, then no
+further PCs would be required for us to perfectly capture it's position in our
+original data set. It is to be expected that we lose some quality of representation
+when doing PCA. In fact, this is desired if we think of later PCs are capturing
+noise in our original data and earlier PCs as capturing signal.
+
+If we look along the x-axis, we see <span style="font-variant: small-caps;">fleece</span> and
+<span style="font-variant: small-caps;">thought</span>
+F2 and <span style="font-variant: small-caps;">trap</span> and <span style="font-variant: small-caps;">thought</span>
+and against <span style="font-variant: small-caps;">start</span> and <span style="font-variant: small-caps;">fleece</span>
+F1. If we look along the y axis, we see <span style="font-variant: small-caps;">kit</span>
+and <span style="font-variant: small-caps;">strut</span> F2 patterned against
+<span style="font-variant: small-caps;">dress, trap</span> and <span style="font-variant: small-caps;">thought</span>
+F2. This plot will be returned to later, as we attempt to interpret our PCs in 
+the face of instability in their direction.
+
+We can follow up this PC-by-PC approach to interpreting the loadings with 
+contribution plots. These can be carried out using the `pca_contrib_plot` 
+function from `nzilbb.vowels`.
+``` {r pc1-contrib, fig.cap="Contribution plot of PC1."}
+pca_contrib_plot(onze_pca, pc_no = 1, cutoff = NULL)
+```
+
+This shows the _contribution_ of each variable to the PC, measured as a
+percentage. This is an alternative to the raw loading. We indicate whether the
+underlying loading is negative or positive by use of either a '+' or '-' and
+by colour. Here, we see the vowels we picked out in the variable plot. This plot
+makes the relative magnitude of different variables more clear than if 
+we used only the variable plot.
+
+We can plot the same plot with a 'cut off' value. This is a method which is 
+used sometimes when interpreting PCs.
+``` {r pc1-contrib-cut, fig.cap="Contribution plot of PC1 with 50% cutoff."}
+pca_contrib_plot(onze_pca, pc_no=1, cutoff=50)
+```
+
+Figure \@ref(fig:pc1-contrib-cut) hides those variables which are not required to account for 50% of the
+contribution of the original variables to the PC.
+
+We now show the contribution plot for PC2.
+
+``` {r pc2-contrib, fig.cap="Contribution plot of PC1."}
+pca_contrib_plot(onze_pca, pc_no = 2, cutoff = NULL)
+```
+
+We provide the contribution plot of PC2 in order to enable comparison between
+it and PC1 and with the first two PCs as represented in the variable plot 
+(Figure \@ref(fig:variable-plot))
+
+Individuals can also be plotted in the space of the first two PCs (or, indeed
+any two PCs we select). We can do this using the function `fviz_pca_ind` 
+from `factoextra`.
+``` {r}
+fviz_pca_ind(
+  onze_pca,
+  repel=TRUE
+)
+```
+
+It is often useful to understand how the observations in a data set are being
+placed in the space defined by a given set of PCs. In this case, we see that
+the individual in the 150th row of the data has a very high PC2 score and a 
+reasonably low PC1 score. This individual, and the individual in the 152nd row
+are coming out as quite extreme in value for PC2.
+We will discuss how this information can be used further
+below. 
+
+Finally, both variables and individuals can be joined in a 'biplot', 
+using `fviz_pca_biplot`. In this case, we restrict both the individuals and the
+variables to those which make the biggest contribution to the two PCs. We pick
+10 of the original variables, and 30 of the individuals. Only the 10 variables
+which most contribute to their PCs and the 30 speakers who take the most extreme
+values for them are plotted.
+``` {r variable-biplot, fig.cap = "Biplot of PC1 and PC2."}
+fviz_pca_biplot(
+  onze_pca,
+  select.var = list(contrib = 10),
+  select.ind = list(contrib = 30),
+  repel = TRUE
+)
+```
+Sometimes it can be useful to have the information in the variable plot and 
+the individual plot at the same time.
+
+### Is PCA Appropriate?
+
+The first question to ask concerning a dataset which we intend to apply PCA to
+is, straightforwardly, "is PCA appropriate?". This is particularly important
+given that PCA will _always_ find relationships between variables. It is 
+important to be able to determine whether these relationships represent genuine
+phenomena or whether they are merely the result of randomness in the data.
+
+We saw above that PCA can be thought of as exploring the structure of
+correlations within a dataset. We can thus ask whether there is any such
+structure. That is, we can look at the correlations present in our data and
+those we would expect if the data lacks an interesting structure in its
+correlations (or at least, structure which we can be confident is not random).
+
+There are various ways of comparing the structure of correlations in a data set
+compared with randomised data.^[For more options see [(Vieira 2012)](http://www.iaees.org/publications/journals/ces/articles/2012-2(2)/permutation-tests-to-estimate-significances.pdf)
+and for implementation in R see [Carmargo 2022](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8858582/).]
+For this question,  will just look at the raw count of significant correlations,
+comparing them in our real data and in 1000 permuted versions of the dataset.
+Here we use the function `correlation_test` from the `nzilbb.vowels` package.
+
+``` {r, cache = TRUE}
+onze_cor_test <- correlation_test(
+  onze_ints %>% select(-speaker), 
+  n = 1000,
+  cor.method = "pearson"
+)
+```
+
+The basic information about the correlation test can be extracted using
+`summary`. Note that you can change the alpha level here.
+``` {r}
+summary(
+  onze_cor_test,
+  alpha = 0.05,
+  n_cors = 5 # Increase this to see more pairwise correlations.
+)
+```
+The strongest correlation in our data is between <span style="font-variant: small-caps;">strut</span>
+and <span style="font-variant: small-caps;">thought</span> F2. There are 129 
+significant correlation in the original data, and an average of 9.5 across our
+1000 permutations (with a max of 22). This indicates that we have much more
+structure in our correlation matrix than we would expect from random data.
+We also see strong correlations _across_ different vowels. Only one of the
+top five correlations is of an F1 and F2 in a single vowel. Such correlations are,
+obviously, not particularly interesting if we are interested in co-variation 
+across multiple vowels.
+
+Information about the pairwise correlations which are present in our data can be
+useful for interpreting PCs. We will return to this below.
+
+We can plot the correlation test in two ways using `nzilbb.vowels`. First, we
+plot the _count_ of significant correlations.
+``` {r correlation-check, fig.cap = "Count of significant correlations."}
+sig_cor_plot <- plot_correlation_counts(onze_cor_test, half_violin = TRUE)
+sig_cor_plot
+```
+
+Figure \@ref(fig:correlation-check) presents the count of significant correlations
+in the original data as a red dot, and the distribution of counts of significant
+correlations as a blue violin.
+
+We can also look at the magnitude of correlations across our variables.
+``` {r correlation-check-2, fig.cap = "Magnitude of correlations in original and permuted data."}
+mag_cor_plot <- plot_correlation_magnitudes(onze_cor_test)
+mag_cor_plot
+```
+From the above plots, we see that we have non-random structure in our
+correlations, both in terms of magnitude and statistical significance. **This**
+**gives us good reason to proceed with PCA.** If we could not easily distinguish
+our data from the distribution of permuted data sets, we would not be in a
+position to apply PCA.
+
+The following plot is **Figure 4** in the paper:
+``` {r}
+figure_4 <- (sig_cor_plot + labs(title = NULL, caption=NULL)) + 
+  (mag_cor_plot + 
+     labs(title = NULL, x = "Magnitude of Pearson's r") +
+     theme(legend.position = "none")) +
+  plot_annotation(
+    title = "Permutation Test on By-Speaker Random Intercepts",
+    subtitle = "(1000 Iterations)",
+    tag_levels = "A",
+    theme = theme(
+      plot.title = element_text(size = 20),
+      plot.subtitle = element_text(size = 15)
+    )
+  ) +
+  plot_layout(guides = "collect")
+
+ggsave(
+  here('plots', 'figure_4.png'),
+  figure_4,
+  dpi = 300, 
+  width = 320, 
+  height = 150,
+  units = "mm"
+)
+figure_4
+```
+
+**Recommendation:** PCA should only be run on vowel data which contains
+non-random structure in their pairwise correlations as revealed by permutation
+test.
+
+### How Many PCs?
+
+As noted above, when scree plots were introduced, we hope to capture the majority
+of variance in our data with the first 'few' PCs. The best method for picking
+what counts as a 'few' is not a settled matter. All methods turn on the kind of
+information present in a scree plot.
+
+In Brand et al. (2021) adopts two criteria:
+
+1. The final PC we select must explain more variation than would be expected
+from the same PC with permuted data. For example, if we are looking at PC2, does
+the amount of variance explained by our PC2 exceed that which we might expect
+from PC2 in a permuted version of our data set.
+2. The final PC we select must explain more than 10% of the variation in the
+data.
+
+The use of a cut off for variance explained is quite widespread in the 
+literature. For instance, Kaiser 1961 argues that eigenvalues greater than one
+should be accepted as they account for more variation than would be explained by
+one of the original variables (Kaiser 1961). This would correspond, in our 
+dataset, to 5% of variance explained (recall that we have 20 variables).
+
+We believe the method in Brand et al. (2021) remains a defensible one. 
+The cut off of 10% can be thought of as a threshold on effect size. There is no
+reason not to adopt such a threshold in exploratory work. 
+However, in presenting the use of PCA for the
+investigation of vowel co-variation is a _general_ method, it is worth offering
+a more robust approach which takes account of recent methodological advances 
+in the use of PCA in the biological sciences.
+
+In particular, 
+permutation and bootstrapping methods have become increasingly popular with the
+increased computer power available to researchers using ordinary PCs. Permutation
+methods are useful for determining a _null_ distribution. The distribution in
+the previous section (Figure \@ref(fig:correlation-check)) is a null
+distribution for the count of significant pairwise correlations. As the count
+from the original data falls well outside this distribution, we take it that
+the correlation structure in our data is _not_ the result of merely random
+variation but reflects real structure. Bootstrapping, on the other hand, 
+generates new data sets with subsets of the original data and are used to
+estimate confidence bands around both the variance explained by each PC and on
+each loading.^[Our use of bootstrapping and permutation tests to estimate confidence
+bands and null distributions for PCA follows the work of Vieria (2012) and
+Carmago (2022), although our implementation in R is distinct from Carmago's.]
+
+The function `pca_test` from `nzilbb.vowels` runs a parallel bootstrap and
+permutation test of the sort just described:
+``` {r, cache = TRUE}
+onze_test <- pca_test(
+  onze_ints %>% select(-speaker), 
+  n = 1000,
+  variance_confint = 0.95,
+  loadings_confint = 0.9
+)
+```
+
+We can directly extract judgements about which PCs are significant and which 
+loadings are significant from `pca_test` using the `summary` function. For now,
+just look at the information about which PCs are significant:
+``` {r}
+summary(onze_test)
+```
+
+According to the summary above, PCs 1-5 are significant, in the sense that they
+explain more variance than attained in 95% of the permuted analyses. This is, 
+in practice, equivalent to the first criterion in Brand et al. (2021). 
+
+We can visualise the test results for variance explained using 
+`plot_variance_explaind` from `nzilbb.vowels`:
+``` {r}
+plot_variance_explained(onze_test)
+```
+
+Here, we see that PCs 1, 2, 3, and 4 are well clear of the permuted data, while
+our value for PC5 is very close to the distribution of permuted values. We also 
+see that the confidence interval for PC3 falls either side of 10%. This is a 
+worry for using a 10% cut off, as in the second criterion used by Brand et al.
+Sometimes this will appear above the threshold and sometimes it won't (this will
+be, judging from the plot, a roughly 50/50 proposition).
+
+A more serious issue is revealed by the bootstrap analysis of our data. This was
+not clear in the analysis of Brand et al. (2021), but, as we will show below, 
+does not affect its conclusions. This is the fact that the confidence bands for
+PC1 and PC2 overlap. This is worrying because in situations in which two PCs
+explain the same, or nearly the same, variance, they become very unstable. In
+the case where they are equal, any two orthogonal lines through the variable
+plot of PC1 and PC2 would do equally well for the PCs. This, in turn, leads to 
+instability in the loadings for each PC. In fact, some researchers in biology
+argue that PCs with overlapping confidence intervals 
+_should not be interpreted_ (e.g. [Björklund (2019)](https://onlinelibrary.wiley.com/doi/full/10.1111/evo.13835)).
+We believe that this is an excessive response to the problem and will offer a
+solution in the following section. However, we agree with Björklund that 
+some indication of the error in our estimation of variance explained should
+be provided.
+
+This information can be extracted from the `pca_test` object, for
+variance explained as a percentage, as follows:
+``` {r}
+onze_test$variance %>% 
+  filter(sig_PC) %>% 
+  select(
+    PC, variance_explained, low_confint_var, high_confint_var, 
+    mean_confint_var, sd_confint_var
+  ) %>% 
+  # Express as percentage
+  mutate(across(.cols = !PC, .fns = ~ .x * 100))
+```
+
+
+**Recommendation:** report on each PC whose values appear as significantly
+greater than expected from the null distribution. This could be in supplementary
+material, or in the main body text. Also report, either visually or in a table,
+the mean, standard deviation and confidence intervals on the variance explained
+by each PC.
+
+The following is **Figure 5** in the paper. We use the `pc_max` argument to 
+restrict out plot to the first 10 PCs.
+
+``` {r}
+figure_5 <- plot_variance_explained(onze_test, pc_max = 10) + 
+  labs(caption = NULL)
+
+ggsave(
+  here('plots', 'figure_5.png'),
+  figure_5,
+  dpi = 500, 
+  width = 160, 
+  height = 100,
+  units = "mm"
+)
+ 
+figure_5
+```
+
+### Interpretation: Which variables?
+
+We now look at interpreting our PCs. We saw in the 3D toy model that PCs can 
+have natural explanations. Often, introductions to PCA suggest that the mark of
+an interpretable PC is that it has 'high' loadings for a handful of variables.^[
+What counts as a 'high' loading depends on the number of variables. The sum of
+squares of the loadings is one, so any loading above $\frac{1}{n}$, where n
+is the number of variables, is contributing more than would be expected if 
+each contributed equally. This is usually a good lower bound for a 'moderate' 
+loading.
+]
+This is just a heuristic though. Some patterns across lots of variables can be
+easily interpreted. For instance, if we fed raw hertz values of all of our 
+vowels into PCA, we would get something like PC1 in the 3D example, in which
+all variables patterned together. This would be just as easy to interpret as a
+size factor as it was in the 3D case!^[
+**NB**: in this case all of many of the variables would not have 'high' loadings
+either. So even the desire to only use high loadings is only a heuristic.
+]
+
+In all cases, we will be looking for some pattern which we can explain,
+occurring across the loadings. A necessary step for this is to decide which
+variables we want to include in our interpretation and which we want to exclude.
+There are a few reasons for this:
+
+1. We _exclude_ some variables to avoid reading in to 'noise' in our data.
+Variables with loadings which could be explained by random chance are to be 
+avoided.
+2. We want to discipline our interpretation to avoid including or excluding 
+variables to suit a pre-existing bias.
+3. We want clear rules which can be applied across multiple data sets or 
+research programmes.
+4. We want to _include_ all those variables which reliably contribute to the PC.
+
+Brand et al. (2021) adopt a cut off value to interpret each PC (as depicted
+above in Figure \@ref(fig:pc1-contrib-cut)). The cut off is applied to the
+loadings represented as contribution values (i.e. as percentages). They 
+successively take the variables with the highest contribution to the PC until
+50% of the contribution of the original variables to the PC is accounted for.
+This approach satisfies the reasons just given.
+
+Other options are possible. We present one here which is somewhat more robust
+and generalisable.
+The 50% cut off value was chosen as a result of trial and error with the 
+particular data. In practice, this method results in a very similar collection
+of variables to use in interpreting our PCs.
+
+We follow Vieira's (2012) use of   
+index loadings. For each loading, for a given PC, the index loading 
+is the product of the PC's squared eigenvalue and the squared loading. Index
+loadings solve two problems:
+
+1. Index loadings are always positive, whereas loadings can be either positive
+or negative. This enables comparison across multiple PCA analyses, where the
+sign can swap while the PCs are essentially equivalent.
+2. Index loadings take into account the amount of variance explained by a 
+given PC. This means that moderate loadings on PCs which explain a lot of 
+variance are ranked higher than moderate loadings on PCs which don't explain
+much variance, etc.
+
+We use permutation and bootstrapping to generate a 
+null distribution and confidence bands for the index loadings for each PC.
+Vieira suggests that the standard 0.05 alpha value, and the corresponding use
+of 95% confidence intervals, is too conservative when using index loadings. So,
+by default, the `pca_test` function uses 90% confidence intervals.
+
+We plot the index loadings for the first PC using the `plot_loadings` function:
+``` {r pc1-loadings, fig.cap = "PC1 index loadings with confidence bands and null distribution."}
+pc1_loadings_plot_uf <- plot_loadings(onze_test, pc_no=1, filter_boots = FALSE)
+pc1_loadings_plot_uf
+```
+
+Just as in the plot of variance explained, this plot has both a null distribution
+and confidence intervals. The actual values from our PCA analysis are presented
+by either a black plus or minus, indicating the sign of the loading. If a black
+minus or plus is outside of the interval for the null distribution, then it
+is 'significant'. The red bars indicate the 95% intervals for the index loading.
+
+Figure \@ref(fig:pc1-loadings) clearly shows the problem of instability in our 
+PCs due to the overlap of the confidence intervals in variance explain for PC1
+and PC2. One intuitive way to see this is to imagine that there are two sources
+of variation in our data, but that in some subsets of the data one dominates the
+other, while in other subsets it is the other way around. In this kind of case,
+sometimes PC1 will represents the one source of variation and sometimes it 
+will represent another. Given this, we would expect our confidence bands on 
+index loadings to include very low values for all our of original variables. 
+This is exactly what we find in Figure \@ref(fig:pc1-loadings). Björklund
+would here say that this is reason to not apply PCA to this data full stop.
+
+However, we argue that this is too fast. There are genuine relationships of 
+covariation in PC1 and PC2 which we want to capture. One way to do this is to 
+look at a _subset_ of bootstrap analyses, namely, those in which the variable
+with highest median across all bootstrapped analyses takes a value in the top
+3/4 of its distribution. This filtering is applied using the `filter_boots`
+option (which can take some time, as confidence intervals are recalculated).
+
+``` {r filtered-pc1, fig.cap = "PC1 index loadings with confidence bands and null distribution, with filtered bootstrap analyses."}
+# This plot will be assigned to a variable so it can be used later.
+pc1_loadings_plot <- plot_loadings(onze_test, pc_no=1, filter_boots = TRUE)
+pc1_loadings_plot 
+```
+
+In Figure \@ref(fig:filtered-pc1) we should not be surprised that the confidence
+bands for <span style="font-variant: small-caps;">thought</span> F2 are high.
+We have selected only those iterations of our bootstrap analysis for which this
+is true. The following variables _are_ however interesting. We see that in almost
+all cases with a high value for <span style="font-variant: small-caps;">thought</span> F2, 
+<span style="font-variant: small-caps;">start</span> and
+<span style="font-variant: small-caps;">strut</span> F2, and 
+<span style="font-variant: small-caps;">thought</span> F2 take high values.
+However, <span style="font-variant: small-caps;">fleece</span> F2 and <span style="font-variant: small-caps;">nurse</span> F2 can take values across a very
+large range. Here, we have a clear rationale for taking the relationship between
+these back vowels to be a genuine source of covariation in the data. We also,
+here, attend to <span style="font-variant: small-caps;">dress</span> F2
+and <span style="font-variant: small-caps;">LOT</span> F1, which appear to 
+take values in the 'significant' range in almost all analyses.
+
+If we ask which variables to _exclude_, we simply use the null distribution. 
+Any sign which appears below the upper band of the null distribution should not
+be used in interpretation. Of those variables which we _include_, we should be
+very cautious about those whose confidence bands stretch down towards zero.
+
+We now look at PC2. Again, we will filter our bootstrapped analyses because 
+the confidence bands for the variance explained by PC1 and PC2 
+overlap.
+``` {r pc2-index-loadings, fig.cap = "PC2 index loadings with confidence bands and null distribution, with filtered bootstrap analyses."}
+# Generate unfiltered plot for paper.
+pc2_loadings_plot_uf <- plot_loadings(onze_test, pc_no=2, filter_boots = FALSE)
+
+# Generate filtered plot to output from this block.
+pc2_loadings_plot <- plot_loadings(onze_test, pc_no=2, filter_boots = TRUE)
+pc2_loadings_plot 
+```
+
+Here, we again exclude those variables which fall outside the null distribution,
+and note some scepticism about the inclusion of 
+<span style="font-variant: small-caps;">thought</span> F2.
+
+At this point, it is useful to look again at the variable plot to see why the
+individual PCs take the form that they do.
+``` {r pc1-pc2-varplot, fig.cap = "PC1 and PC2 variable plot."}
+pc1_pc2_varplot <- fviz_pca_var(
+  onze_pca, repel = TRUE, 
+  select.var = list(contrib = 15)
+)
+pc1_pc2_varplot
+```
+
+
+Recall that the angle between arrows indicates the correlation between variables
+as captured by the first two PCs, with arrows close in angle being 
+highly positively correlated, arrows at right angles having no correlation,
+and arrows pointing in the opposite direction being strongly negatively 
+correlated. It is possible to divide this variable plot set of arrows,
+mentally, into _three_ groups, rather than two. The first, the large and long
+arrows for <span style="font-variant: small-caps;">thought</span>, 
+<span style="font-variant: small-caps;">strut,</span> and <span style="font-variant: small-caps;">start</span>
+F2, with <span style="font-variant: small-caps;">thought</span> F1, and a
+smaller arrow for <span style="font-variant: small-caps;">dress</span> F2. 
+This group is what tends to come through in our PC1. The second group is the 
+collection of positively correlated, variables with <span style="font-variant: small-caps;">trap F1</span>
+dominating. These tend to dominate PC2. The _third_ group is variously captured
+by PC1 _or_ PC2, depending on the specifics of the dataset. It is dominated by
+<span style="font-variant: small-caps;">fleece</span> F1 and <span style="font-variant: small-caps;">fleece</span> F2, and is correlated with <span style="font-variant: small-caps;">goose</span> F1,
+<span style="font-variant: small-caps;">nurse</span> F2 etc. Across 
+the range of bootstrapped analyses, this group variously
+appears in either PC1 or PC2 or partially in both.^[
+Consider, for instance, the high confidence band for <span style="font-variant: small-caps;">fleece</span>
+F2 in Figure \@ref(fig:pc2-index-loadings).
+] The two PCs we are currently
+evaluating primarily place the second and third 'groups' in this variable plot
+in PC2.
+
+As always, with statistical methods, certain phenomena are brought to the fore
+while others are hidden. What matters here is that we have a clear way to
+discern genuine strong relationships of covariation from those which are an 
+artefact of having to draw straight lines. For instance, PC1 _does_ capture
+a genuine relationship of covariation between <span style="font-variant: small-caps;">thought</span>,
+<span style="font-variant: small-caps;">start</span>, and <span style="font-variant: small-caps;">strut</span>.
+
+The following is **Figure 6** in the paper.
+``` {r, fig.cap = "Figure 6 for paper."}
+figure_6 <- (
+  (
+    pc1_loadings_plot_uf + 
+      labs(title = "PC1 Index Loadings", subtitle = NULL)
+   ) + 
+    (
+      pc1_loadings_plot +
+        labs(title = "PC1 Index Loadings (Filtered)", subtitle = NULL)
+    )
+  ) /
+  (
+    (
+      pc2_loadings_plot_uf + 
+        labs(title = "PC2 Index Loadings", subtitle = NULL)
+     ) + 
+    (
+      pc2_loadings_plot +
+        labs(title = "PC2 Loadings (Filtered)", subtitle = NULL)
+    )
+  ) +
+  plot_annotation(
+    title = "PC1 and PC2 Loadings",
+    tag_levels = "A",
+    theme = theme(plot.title = element_text(size = 20))
+  ) +
+  plot_layout(guides = "collect")
+
+ggsave(
+  here('plots', 'figure_6.png'),
+  figure_6,
+  dpi = 500, 
+  width = 320, 
+  height = 200,
+  units = "mm"
+)
+```
+
+We now turn to the remaining PCs which appeared as 
+significant in our earlier analysis. Here we again use `filter_boots` because
+PC3 and PC4 have overlapping confidence bands for variance explained.
+
+``` {r pc3-index-loadings, fig.cap = "PC3 index loadings with confidence bands and null distribution, with filtered bootstrap analyses."}
+plot_loadings(onze_test, pc_no=3, filter_boots = TRUE)
+```
+
+Here it seems that all of the significant index loadings, those from
+<span style="font-variant: small-caps;">thought</span> F1 up, are really 
+associated with <span style="font-variant: small-caps;">lot</span> F1. In this
+case, we can recommend considering all of these variables in the interpretation.
+
+``` {r pc4-index-loadings, fig.cap = "PC4 index loadings with confidence bands and null distribution, with filtered bootstrap analyses."}
+pc4_loadings_plot <- plot_loadings(onze_test, pc_no=4, filter_boots = TRUE)
+pc4_loadings_plot
+```
+
+PC4 seems to capture a correlation between <span style="font-variant:
+small-caps;">strut</span> and <span style="font-variant:
+small-caps;">start</span> F1, and, perhaps, <span style="font-variant:
+small-caps;">kit</span> F1. This PC is not considered in Brand et al. (2021). 
+It seems it is a real cross vowel relationship. However, as outlined above, 
+the choice to stick with PCs which explain at least 10% of variance is
+defensible in an exploratory context. Moreover, it is dominated by a single
+pairwise correlation. This is not the kind of cluster which was being looked
+for in Brand et al. (2021).
+It remains important to report all of this, if only in supplementary material. 
+It is information which may be useful for reviewers
+and readers to either criticise the decisions made or as a prompt for further
+research.
+
+The following is a variable plot of PC3 and PC4, which, again, overlap in
+variance.
+```{r var-plot-pc3-pc4, fig.cap = "Variable plot of PC3 and PC4."}
+fviz_pca_var(onze_pca, axes = c(3,4), repel = TRUE, select.var = list(contrib = 10))
+```
+
+Finally, we look at PC5. This does not overlap with any other PCs. Consequently,
+we do not use the `filter_boots=TRUE` option.
+
+``` {r pc5-index-loadings, fig.cap = "PC5 index loadings with confidence bands and null distribution, with filtered bootstrap analyses."}
+pc5_loadings_plot <- plot_loadings(onze_test, pc_no=5)
+pc5_loadings_plot
+```
+
+If Figure \@ref(fig:pc5-index-loadings), only <span style="font-variant:
+small-caps;">dress</span> F1 appears reliably significant here. This is not a
+clear pattern of covariation between vowels, so we can leave it behind. While it
+might be useful for accurate data representation. It does not help with our aim
+of finding covariation between vowels. We would report this as a reason for
+ignoring PC5 despite it's appearing as 'significant'.
+
+The discussion here concerns only the selection of variables with which to
+interpret our PCs. We have not yet done any actual interpretation. 
+
+**Recommendations:** We recommend excluding all variables whose index loadings
+fall within the 90% interval of the null distribution. These could just as
+easily be the result of random noise as signal. Where PCs are unstable, we
+recommend testing the stability which obtains when bootstrapped analyses of the
+data are filtered to ensure an index loading for the variable with highest
+median loading above the 1st quartile. If this reveals stable structure, the
+significant variables which seem to be stable should be used to interpret the
+PCs. It is important to report which variables are being used to filter the
+bootstraps.
+
+## Connecting PCA with the Original Data
+
+_This analysis corresponds to section "Returning to the data" in the paper._
+
+Interpretation of PCs by loadings often requires both additional information and 
+creative connections between the PCs and our original data.
+
+One piece of information which is particularly useful when looking at structure
+in vowel covariation is the pattern of change occurring in the vowel space over
+time. Thankfully, this is easy to extract from the GAMM models we fit earlier.
+
+Our application of PCA came after a series of modifications to the data. Now
+we need to partially retrace our steps in order to understand the data. In 
+both cases, we use the _scores_ assigned by PCA to each of our speakers.
+
+There are two steps in return to our original vowel data:
+
+1. Exploring the relationship between the data we have fed into the `prcomp`
+function and the PC scores for each speaker. 
+2. Exploring the vowel spaces of speakers selected by their PC score (with
+the use of supplementary variables as in the 3D toy model).
+
+We'll look at plotting change over time from GAMMs, and then consider these
+two points in turn.
+
+### Plotting Vowel Space Change
+
+We first collect the model predictions for each gender in the data and year of
+birth. We use the `get_predictions` function from `itsadug`:^[
+For a tutorial on plotting vowel space changes like this see 
+[here](https://joshua.wilsonblack.nz/post/visualising-vowel-space-gamms/).
+]
+``` {r}
+# Define the values we want predictions for.
+min_yob <- range(onze_vowels$yob)[[1]]
+max_yob <- range(onze_vowels$yob)[[2]]
+
+to_predict <- list(gender = c("M", "F"), yob = seq(min_yob, max_yob))
+
+# Collect predictions for each model.
+onze_preds <- onze_models %>%
+  mutate(
+    predictions = map(
+      model, 
+      ~ get_predictions(.x, cond = to_predict, print.summary=FALSE)
+    )
+  ) %>%
+  select(
+    vowel, formant_type, predictions
+  ) %>%
+  unnest(
+    predictions
+  ) %>%
+  select(
+    -speech_rate, -rm.ranef, -speaker
+  ) %>%
+  mutate(
+    vowel_formant = str_c(vowel, "_", str_sub(formant_type, end=2L))
+  )
+
+onze_preds_wide <- onze_preds %>%
+  select(-CI , -word) %>%
+  pivot_wider(
+    id_cols = c(vowel, gender, yob),
+    names_from = formant_type,
+    values_from = fit
+  )
+```
+
+We can now visualise these:
+``` {r gamm-sound-change, fig.cap = "Change in NZE monophtongs from speakers both in 1864 through 1982."}
+first_obs <- onze_preds_wide %>%
+  group_by(vowel, gender) %>%
+  slice(which.min(yob))
+
+sound_change_plot <- onze_preds_wide %>%
+  filter(
+    gender == "F"
+  ) %>%
+  ggplot(
+    aes(
+      x = F2_lob2,
+      y = F1_lob2,
+      colour = vowel,
+      label = vowel # Add label to the aesthetics.
+    )
+  ) +
+  geom_path(
+    arrow = arrow(length = unit(3, "mm"), type = "closed"),
+    show.legend = FALSE, # Remove legend
+    size = 1
+  ) +
+  geom_label(
+    # Note filtering as we are only dealing with female speakers now.
+    data = first_obs %>% filter(gender == "F"), 
+    show.legend = FALSE, # Again remove legend.x
+    alpha = 0.7,
+    size = 3
+  ) +
+  # Often need to use 'expansion' here to fit in 'THOUGHT'
+  scale_x_reverse(expand = expansion(add = 1)) + 
+  scale_y_reverse() +
+  labs(
+    title = "Sound Change in NZE Monophthongs",
+    subtitle = "Year of birth: 1864 - 1982",
+    x = "F2 (Lobanov 2.0)",
+    y = "F1 (Lobanov 2.0)"
+  )
+
+sound_change_plot
+```
+
+This plot enables us to evaluate PC loadings as either:
+
+- _all_ in or opposed to the direction of change, or
+- _partially_ in the direction of change and _partially_ against it.
+
+In the former case, the PC is plausibly interpreted as connected with sound
+change.
+
+### PCA Input and PC Scores
+
+In any PCA analysis, especially one in which there are many steps required to
+move from one to the next, it is not immediately clear what a high PC values
+means with respect to the original data.
+
+The following code uses the permutation and bootstrap test carried out by 
+`pca_test` to plot the data fed to PCA (in this case, random intercepts from
+GAMM models) and the PC scores assigned to our speakers. Significant variables
+are indicated by colour.^[This plot is a version of one found in the
+Analysis supplementary to Brand et al. (2021), in the section titled
+"Relationship between intercepts and PC scores."]
+We use the function `plot_pc
+
+``` {r pca-input-and-scores, fig.dim = c(10,10), fig.cap = "PC Scores and PCA input values (random intercepts)."}
+plot_pc_input(onze_pca, onze_ints %>% select(-speaker), onze_test)
+```
+
+Figure \@ref(fig:pca-input-and-scores) is useful for demonstrating that the 
+PC scores assigned to individuals really do correspond to patterns in the 
+data fed into PCA. For instance, it makes clear that as a speakers PC1 score
+increases, their random intercept for <span style="font-variant: small-caps;">thought</span>
+F1 and F2 both increase. Plots of this sort are best confined to supplementary
+material.
+
+We might also want to see what the PCs look like when represented within a 
+vowel space diagram. The following code reconstructs the top right panel of
+Figures 7, 9, and 11 from Brand et al. (2021).
+To plot the relationship between intercepts and PC scores _within the vowel_
+_space_ we add the random intercept values to the predicted fit from the GAMM
+models. This spreads each speaker's random intercepts across the vowel space.
+In order to plot the difference between high PC and low PC speakers, for each
+vowel, we fit a series of linear models which predict the sum of the random
+intercept values and the GAMM model fits (i.e. the random intercepts as
+distributed across the vowel space) from the PC score. This allows us to plot
+straight lines across a cloud of points for each vowel.
+
+We first collect all of the required data together. This is a long block of
+code, which is hidden by default.
+
+``` {r, class.source = 'fold-hide'}
+onze_ints_long <- onze_ints %>%
+  bind_cols(onze_pca$x) %>%
+  pivot_longer(
+    cols = matches("F1|F2"),
+    names_to = "vowel_formant",
+    values_to = "intercept"
+  ) %>%
+  left_join(
+    onze_vowels %>% select(speaker, gender, yob) %>% unique()
+  ) %>%
+  left_join(
+    onze_preds, by = c("vowel_formant", "gender", "yob")
+  ) %>%
+  mutate(
+    vs_intercept = intercept + fit
+  )
+
+## Linear models
+
+onze_ints_linear <- onze_ints_long %>%
+  pivot_longer(
+    cols = matches("PC[0-9]+"),
+    names_to = 'PC',
+    values_to = 'PC_score'
+  ) %>%
+  group_by(vowel, formant_type, PC) %>%
+  nest() %>%
+  mutate(
+    model = map(data, ~lm(vs_intercept ~ PC_score, data=.x)),
+    data = map2(data, model, ~ .x %>% mutate(linear_fit = .y[['fitted.values']]))
+  ) %>%
+  select(
+    data
+  ) %>%
+  unnest(data)
+
+
+## Extract variable loadings from PCs
+variable_loadings = onze_pca$rotation %>%
+  as_tibble(rownames = "vowel_formant") %>%
+  pivot_longer(
+    cols = matches("PC[0-9]+"),
+    names_to = "PC",
+    values_to = "loading"
+  )
+
+## Now, add variable loadings and widen so F1 and F2 have separate columns.
+onze_ints_to_plot <- onze_ints_linear %>%
+  mutate(
+    formant_type = str_sub(formant_type, end = 2L)
+  ) %>%
+  left_join(variable_loadings) %>%
+  group_by(PC, vowel) %>%
+  mutate(
+    max_loading = max(abs(loading))
+  ) %>%
+  ungroup() %>%
+  select(
+    -fit, -CI, -intercept, -vowel_formant
+  ) %>%
+  pivot_wider(
+    names_from = "formant_type",
+    values_from = c("vs_intercept", "linear_fit", "loading"),
+    names_glue = "{formant_type}_{.value}"
+  )
+```
+
+The following code block defines a function which can be used to plot each PC and apply it to PC1.
+``` {r pc1-vs-plot, fig.cap = "PC1 and speaker random intercepts in vowel space."}
+plot_vs_pc <- function(PC_name) {
+  onze_ints_to_plot %>%
+      filter(
+        PC == PC_name
+      ) %>%
+      ggplot(
+        aes(
+          x = F2_vs_intercept,
+          y = F1_vs_intercept,
+          colour = PC_score,
+          group = vowel,
+          label = vowel,
+          size = max_loading,
+          fill = rescale(max_loading^2, to = c(0, 1))
+        )
+      ) +
+      geom_point(size = 0.7, alpha = 0.5) +
+      geom_line(
+        aes(
+          x = F2_linear_fit,
+          y = F1_linear_fit,
+          size = max_loading
+        ),
+        show.legend = FALSE
+      ) +
+      geom_label_repel(
+        data = . %>%
+          group_by(vowel) %>%
+          mutate(
+            F1_vs_intercept = mean(F1_vs_intercept),
+            F2_vs_intercept = mean(F2_vs_intercept)
+          ) %>%
+          filter(PC_score == min(PC_score)),
+        show.legend = FALSE,
+        alpha = 0.6,
+        min.segment.length = 0,
+        force = 200,
+        segment.alpha = 0.5
+      ) +
+      scale_x_reverse(expand = expansion(add = 0.7)) +
+      scale_y_reverse(position = "right") +
+      scale_colour_gradient2(
+        name = "PC score",
+        low = "black",
+        mid = "white" ,
+        high = "#7CAE00",
+        midpoint=0,
+        breaks = c(-3, 0, 3)
+      ) +
+      scale_fill_gradient(low = "white", high = "yellow", guide = "none") +
+      scale_size_continuous(range = c(1.5, 4), guide = "none") +
+      labs(
+        x = "F2 (Speaker Intercept + GAMM Fit)",
+        y = "F1 (Speaker Intercept + GAMM Fit)"
+      )
+}
+
+pc1_vs <- plot_vs_pc("PC1") +
+  labs(
+    title = "PC1 and Speaker Random Intercepts in Vowel Space"
+  )
+pc1_vs
+```
+
+In plots of this sort, the size and depth of yellow of the labels indicates the
+size of loadings. Here, we have already decided to focus on THOUGHT, STRUT, and
+START. We see that high PC scores for PC1 correspond to fronting and lowering in
+<span style="font-variant: small-caps;">thought</span>, and backing in <span
+style="font-variant: small-caps;">strut</span> and <span style="font-variant:
+small-caps;">start</span>. This is the interpretation given in Brand et al.
+(2021). This pattern is not obviously connected to changes in progress as
+depicted in Figure \@ref(fig:gamm-sound-change).
+
+``` {r pc2-vs-plot, fig.cap = "PC2 and speaker random intercepts in vowel space."}
+pc2_vs <- plot_vs_pc("PC2")  +
+  labs(
+    title = "PC2 and Speaker Random Intercepts in Vowel Space"
+  )
+pc2_vs
+```
+
+PC 2, on the other hand, seems to track change in progress, particularly in
+the front vowels. As PC2 scores _lower_ we see <span style="font-variant: small-caps;">trap</span>
+and <span style="font-variant: small-caps;">dress</span> rising, and <span style="font-variant: small-caps;">kit</span>
+lowering, just as in our 3D toy example, while changes in <span style="font-variant: small-caps;">fleece</span>
+and <span style="font-variant: small-caps;">nurse</span> also match changes in progress.
+
+``` {r pc3-vs-plot, fig.cap = "PC3 and speaker random intercepts in vowel space."}
+pc3_vs <- plot_vs_pc("PC3")  +
+  labs(
+    title = "PC3 and Speaker Random Intercepts in Vowel Space"
+  )
+
+pc3_vs
+```
+
+This PC is interpreted in Brand et al. (2021) as capturing a relationship
+between the back and front vowels (see Section 5.2.3 in Brand et al. (2021)).
+
+The difficulty in the code above is associated with the use of 
+random intercepts as input to PCA. In general, any plot of this sort needs to 
+find a patch back from the input to the PCA function and speaker vowel spaces.
+
+Another useful plot for understanding the meaning of the PCs reintroduces the
+explanatory variables from our GAMM models. GAMMs were introduced to this 
+project in order to ensure that the patterns of covariation. We can verify that
+there is no relationship between our explanatory variables and our PC scores
+by plotting them together:
+
+``` {r pc1-by-yob-g, fig.cap = "PC1 score by year of birth and gender."}
+# Create a dataframe with random intercepts, PC scores, and speaker gender and
+# year of birth.
+onze_ints_and_pcs <- onze_ints %>%
+  bind_cols(
+    onze_pca$x
+  ) %>%
+  left_join(
+    onze_vowels %>% select(speaker, gender, yob) %>% unique()
+  ) 
+
+
+pc1_yob <- onze_ints_and_pcs %>%
+  ggplot(
+    aes(
+      y = PC1,
+      x = yob,
+      colour = gender
+    )
+  ) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(
+    title = "Speakers by PC1 Score, Year of Birth and Gender",
+    y = "PC1 score",
+    x = "Year of birth"
+  ) +
+  scale_colour_manual(values = c("M" = "#009E73", "F" = "#E69F00"))
+
+pc1_yob
+```
+
+And for PC2:
+``` {r pc2-by-yob-g, fig.cap = "PC2 score by year of birth and gender."}
+pc2_yob <- onze_ints_and_pcs %>%
+  ggplot(
+    aes(
+      y = PC2,
+      x = yob,
+      colour = gender
+    )
+  ) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(
+    title = "Speakers by PC2 Score, Year of Birth and Gender",
+    y = "PC2 score",
+    x = "Year of birth"
+  ) +
+  scale_colour_manual(values = c("M" = "#009E73", "F" = "#E69F00"))
+
+pc2_yob
+```
+
+In both Figure \@ref(fig:pc1-by-yob-g) and Figure \@ref(fig:pc2-by-yob-g) the
+lines estimating the relationship between PC score and year of birth are flat.
+This indicates that there is no obvious relationship between the two. This is
+true for both genders in the data.
+
+In the case of PC2, this is particularly important. PC2 seems to be aligned with
+changes in progress over this time period. However, your PC2 score is not 
+determined by your year of birth. This encourages the Brand et al. (2021) 
+interpretation of PC2 as tracking how conservative a speaker is _given their year_
+_of birth_. That is, the vowel space of a speaker with a low PC2 score born
+in the 1890s will be quite different from that of a speaker both in the 1970s,
+even while both are advanced in sound change relative to their year of birth.
+We will visualise this in a moment.
+
+The same output can easily be produced for any other PC desired. Simply change
+the `x = PC2` and the plot labels from the previous code block.
+
+
+The following code is to output **Figure 7** for the paper:
+``` {r figure-7} 
+figure_7 <- pc1_yob / (pc2_vs + sound_change_plot) +
+    plot_annotation(
+    title = "PC2 Interpretive Plots",
+    tag_levels = "A",
+    theme = theme(plot.title = element_text(size = 20))
+  )
+
+ggsave(
+  here('plots', 'figure_7.png'),
+  figure_7,
+  dpi = 500, 
+  width = 320, 
+  height = 300,
+  units = "mm"
+)
+
+figure_7
+```
+
+### Normalised vowel spaces
+
+One way to get back to actual vowel space data is to look at vowel spaces, 
+selecting speakers by their PC scores. For this, we use the function
+`plot_vowel_space` from `nzilbb.vowels`.
+
+We start by selecting speakers who have high PC2 scores, while their other
+PCs (here we include the first three PCs). By high, we mean 'in the top quartile', by
+moderate, we mean 'in the second or third quartiles', by low, we mean 'in the
+bottom quartile'.
+
+``` {r}
+high_pc2 <- onze_ints_and_pcs %>%
+  filter(
+    PC2 > quantile(PC2, 0.75),
+    if_all(
+      .cols = c("PC1", "PC3"), 
+      ~ between(.x, quantile(.x, 0.25), quantile(.x, 0.75))
+    )
+)
+
+high_pc2_speakers <- high_pc2 %>% pull(speaker)
+high_pc2_speakers
+```
+We plot these speakers using `plot_vowel_space`. This function requires the
+data to have columns in the order "speaker, vowel identifiers, F1, and F2".
+Here, I will modify the speaker identifiers so they include year of birth as
+well. This is convenient for our interpretation of PC2 with respect to change
+in progress.
+``` {r high-pc2-vs, fig.dim = c(10,10), fig.cap = "High PC2 Vowel Spaces."}
+# We define some vowel colours for the NZE monophthongs.
+vowel_colours <- c(
+  DRESS = "#9590FF",
+  FLEECE = "#D89000",
+  GOOSE = "#A3A500",
+  KIT = "#39B600",
+  LOT = "#00BF7D",
+  NURSE = "#00BFC4",
+  START = "#00B0F6",
+  STRUT = "#F8766D",
+  THOUGHT = "#E76BF3",
+  TRAP = "#FF62BC"
+)
+
+plot_vowel_space(
+  onze_vowels %>% 
+    select(speaker, vowel, F1_lob2, F2_lob2, yob) %>%
+    mutate(
+      speaker = paste0(speaker, " (", yob, ")")
+    ), 
+  speakers = glue("{high_pc2$speaker} ({high_pc2$yob})"), 
+  vowel_colours = vowel_colours
+) + labs(
+  title = "High PC2 Score Speakers"
+)
+```
+
+We can do the same for low PC2 speakers:
+``` {r low-pc2-vs, fig.dim = c(10,10), fig.cap = "High PC2 Vowel Spaces."}
+low_pc2 <- onze_ints_and_pcs %>%
+  filter(
+    PC2 < quantile(PC2, 0.25),
+    if_all(
+      .cols = c("PC1", "PC3"), 
+      ~ between(.x, quantile(.x, 0.25), quantile(.x, 0.75))
+    )
+)
+
+plot_vowel_space(
+  onze_vowels %>% 
+    select(speaker, vowel, F1_lob2, F2_lob2, yob) %>%
+    mutate(
+      speaker = paste0(speaker, " (", yob, ")")
+    ), 
+  speakers = glue("{low_pc2$speaker} ({low_pc2$yob})"), 
+  vowel_colours = vowel_colours
+) + labs(
+  title = "Low PC2 Score Speakers"
+)
+```
+
+And, finally, we pick some entirely moderate speakers. That is, speakers who
+are in the middle for the first three PCs. We will tighten our bands so that these
+speakers are 'super moderate', in the sense that they all fall within the 0.3 and
+0.7 quantiles.
+``` {r moderate-vs, fig.dim = c(10,20), fig.cap = "Moderate speaker vowel spaces."}
+moderates <- onze_ints_and_pcs %>%
+  filter(
+    if_all(
+      .cols = c("PC1", "PC2", "PC3"), 
+      ~ between(.x, quantile(.x, 0.3), quantile(.x, 0.7))
+    )
+)
+
+plot_vowel_space(
+  onze_vowels %>% 
+    select(speaker, vowel, F1_lob2, F2_lob2, yob) %>%
+    mutate(
+      speaker = paste0(speaker, " (", yob, ")")
+    ), 
+  speakers = glue("{moderates$speaker} ({moderates$yob})"), 
+  vowel_colours = vowel_colours
+) + labs(
+  title = "Moderate Speakers"
+)
+```
+
+There is no short cut to insight with plots like this. In the following section, 
+we will pick out four speakers to illustrate the interpretation of PC2.
+
+Sometimes it is useful to produce an interactive in order to explore the vowel
+spaces of individual speakers by PC score. This was done as part of Brand et al.
+(2021), and can be found [here](https://onze.shinyapps.io/Covariation_shiny/).
+
+### Interpretation: bringing it all together
+
+All of this information can be brought together in composite plots. We do this,
+as an example, for PC2. 
+
+We combine plots using the `patchwork` library, which enables us to apply
+arithmetic to `ggplot` objects. For instance, we can put two plots side by
+side by joining them with a `+`.
+
+Here we show the difference between speakers with moderate PC2 from early
+and late in our time period and two speakers from the middle of the time 
+period with extreme scores. 
+
+From the moderate speakers (Figure \@ref(fig:moderate-vs)) we pick the speaker
+`MU_f_463`, although we could just have easily have picked `MU_m_072`. This
+speaker will represent an early born speaker with moderate PCs. We will pick
+`CC_f_130` as a late born moderate speaker. We then pick `CC_f_457` as a 
+high PC2 speaker, and `CC_f_545` as a low PC2 speaker from around the same year.
+
+We first highlight these in our plot of PC2 scores by year and gender.
+
+``` {r pc2-patch_1, fig.cap = "PC2 score by year of birth and gender."}
+desired_speakers <- c("MU_f_463", "CC_f_130", "CC_f_457", "CC_f_545")
+
+pc2_patch_1 <- onze_ints_and_pcs %>%
+  mutate(
+    desired_speaker = speaker %in% desired_speakers,
+  ) %>%
+  ggplot(
+    aes(
+      y = PC2,
+      x = yob,
+      colour = gender,
+      label = speaker
+    )
+  ) +
+  geom_point(aes(alpha = desired_speaker), show.legend = FALSE) +
+  geom_smooth(method = "lm", alpha = 0.5) +
+  geom_label_repel(
+    data = . %>% filter(speaker %in% desired_speakers),
+    min.segment.length = 0
+  ) +
+  labs(
+    title = "Speakers by PC2 Score, Year of Birth and Gender",
+    y = "PC2 score",
+    x = "Year of birth"
+  ) +
+  scale_colour_manual(values = c("M" = "#009E73", "F" = "#E69F00")) +
+  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.2))
+
+pc2_patch_1
+```
+
+We can also combine this plot with a plot of each speakers vowel space as 
+follows (This is **Figure 8** in the paper):
+``` {r fig.dim = c(8, 16)}
+figure_8 <- pc2_patch_1 /
+  plot_vowel_space(
+    onze_vowels %>%
+      select(speaker, vowel, F1_lob2, F2_lob2, yob),
+    speakers = desired_speakers,
+    vowel_colours = vowel_colours
+  ) +
+  plot_annotation(
+    title = "Speakers by PC2 Score with Vowel Spaces",
+    tag_levels = "A",
+    theme = theme(plot.title = element_text(size = 20))
+  ) +
+  plot_layout(heights = c(2, 4))
+
+ggsave(
+  here('plots', 'figure_8.png'),
+  figure_8,
+  dpi = 500, 
+  width = 200, 
+  height = 300,
+  units = "mm"
+)
+
+
+figure_8
+```
+
+This plot is discussed in more detail in the paper. The main point is to 
+highlight that speakers _born in the same year_ can be identified as leaders
+or laggers by PC2 _and_ that this difference can be seen in the speakers 
+vowel spaces. We also see how moderate speakers in PC2 have very different
+looking vowel spaces if selected from the start or the end of the year of birth
+range.
+
+# Conclusion
+
+This RMarkdown has set out the use of PCA for monophthong data in two stages.
+Both have used data from the ONZE corpus. The first stage presented the 
+basic idea of PCA using three variables from the ONZE dataset with known 
+inter-relations. The aim of this section was to present PCA geometrically, 
+visualising the centre of a cloud of points, and how the PCs are generated 
+by drawing lines which successively maximise variance.
+
+The second stage presented a simplified, standalone, version of our case study:
+the PCA analysis of the ONZE data carried out by Brand et al. (2021). We fit a
+series of GAMM models from which we extract random intercepts for each speaker.
+This enabled us to remove known variation from our data, to further enhance our
+ability to find new patterns of variation. We then applied PCA to the collection
+of random intercepts, first showing how to fit and interact with a PCA analysis
+in R before turning to three core questions:
+
+1. When is PCA appropriate?
+2. How many PCs should be considered?
+3. Which variables should we use to interpret the PCs?
+
+The approach to these questions taken in Brand et al. (2021) was extended so as
+to be more robust to instability in PC loadings and includes a more objective
+method for _excluding_ loadings. Recommendations were given for responding to
+each question.
+
