@@ -2116,7 +2116,7 @@ the `x = PC2` and the plot labels from the previous code block.
 
 
 The following code is to output **Figure 7** for the paper:
-``` {r figure-7} 
+``` {r figure-7, fig.dim = c(10, 16), fig.cap = "All PC2 Interpretive Plots."} 
 figure_7 <- pc1_yob / (pc2_vs + sound_change_plot) +
     plot_annotation(
     title = "PC2 Interpretive Plots",
@@ -2271,7 +2271,7 @@ high PC2 speaker, and `CC_f_545` as a low PC2 speaker from around the same year.
 
 We first highlight these in our plot of PC2 scores by year and gender.
 
-``` {r pc2-patch_1, fig.cap = "PC2 score by year of birth and gender."}
+``` {r pc2-patch-1, fig.cap = "PC2 score by year of birth and gender."}
 desired_speakers <- c("MU_f_463", "CC_f_130", "CC_f_457", "CC_f_545")
 
 pc2_patch_1 <- onze_ints_and_pcs %>%
