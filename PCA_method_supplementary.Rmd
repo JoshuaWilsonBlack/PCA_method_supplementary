@@ -190,7 +190,8 @@ figure_1 <- onze_vowels_full %>%
     y = "Count of speakers",
     fill = "Gender"
   ) +
-  scale_fill_manual(values = c("#f1a340", "#998ec3"))
+  scale_fill_manual(values = c("#f1a340", "#998ec3")) +
+  scale_x_continuous(breaks = seq(1875, 1975, 25))
 
 ggsave(
   here('plots', 'figure_1.png'), 
@@ -2117,7 +2118,7 @@ the `x = PC2` and the plot labels from the previous code block.
 
 The following code is to output **Figure 7** for the paper:
 ``` {r figure-7, fig.dim = c(10, 16), fig.cap = "All PC2 Interpretive Plots."} 
-figure_7 <- pc1_yob / (pc2_vs + sound_change_plot) +
+figure_7 <- pc2_yob / (pc2_vs + sound_change_plot) +
     plot_annotation(
     title = "PC2 Interpretive Plots",
     tag_levels = "A",
@@ -2273,6 +2274,15 @@ We first highlight these in our plot of PC2 scores by year and gender.
 
 ``` {r pc2-patch-1, fig.cap = "PC2 score by year of birth and gender."}
 desired_speakers <- c("MU_f_463", "CC_f_130", "CC_f_457", "CC_f_545")
+annotations = tibble(
+  speaker = desired_speakers,
+  label = c(
+    "Older (yob: 1877)",
+    "Younger (yob: 1980)",
+    "Leader (yob: 1953)",
+    "Lagger (yob: 1952)"
+  )
+)
 
 pc2_patch_1 <- onze_ints_and_pcs %>%
   mutate(
@@ -2286,19 +2296,29 @@ pc2_patch_1 <- onze_ints_and_pcs %>%
       label = speaker
     )
   ) +
-  geom_point(aes(alpha = desired_speaker), show.legend = FALSE) +
-  geom_smooth(method = "lm", alpha = 0.5) +
+  geom_smooth(method = "lm", alpha = 0.25) +
+  geom_point(aes(alpha = desired_speaker)) +
   geom_label_repel(
     data = . %>% filter(speaker %in% desired_speakers),
-    min.segment.length = 0
+    min.segment.length = 0,
+    show.legend = FALSE
   ) +
   labs(
     title = "Speakers by PC2 Score, Year of Birth and Gender",
     y = "PC2 score",
-    x = "Year of birth"
+    x = "Year of birth",
+    colour = "Gender"
   ) +
-  scale_colour_manual(values = c("M" = "#009E73", "F" = "#E69F00")) +
-  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.2))
+  scale_colour_manual(
+    values = c("M" = "#009E73", "F" = "#E69F00")
+  ) +
+  scale_alpha_manual(values = c("TRUE" = 1, "FALSE" = 0.2)) +
+  guides(
+    alpha = "none",
+    colour = guide_legend(
+      override.aes = list(linetype = c(0,0), size = 3, fill = NA)
+    )
+  )
 
 pc2_patch_1
 ```
@@ -2307,12 +2327,19 @@ We can also combine this plot with a plot of each speakers vowel space as
 follows (This is **Figure 8** in the paper):
 ``` {r fig.dim = c(8, 16)}
 figure_8 <- pc2_patch_1 /
-  plot_vowel_space(
+  (plot_vowel_space(
     onze_vowels %>%
       select(speaker, vowel, F1_lob2, F2_lob2, yob),
     speakers = desired_speakers,
     vowel_colours = vowel_colours
   ) +
+    geom_label(
+      x = 1.25, 
+      y = 1.3,
+      nudge_x = 10,
+      colour = "black",
+      aes(label = label), 
+      data = annotations)) +
   plot_annotation(
     title = "Speakers by PC2 Score with Vowel Spaces",
     tag_levels = "A",
