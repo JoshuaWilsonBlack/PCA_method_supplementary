@@ -82,7 +82,7 @@ library(factoextra)
 # nzilbb.vowels used to share the data and some useful functions.
 # Install via github using following commented line. If this does not work,
 # ensure that you have the package `remotes` installed.
-# remotes::install_github('https://github.com/JoshuaWilsonBlack/nzilbb_vowels')
+# remotes::install_github('https://github.com/nzilbb/nzilbb_vowels')
 library(nzilbb.vowels)
 
 # We will fit GAMM models as part of our preprocessing example
