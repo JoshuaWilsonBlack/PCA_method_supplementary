@@ -1496,7 +1496,7 @@ Just as in the plot of variance explained, this plot has both a null distributio
 and confidence intervals. The actual values from our PCA analysis are presented
 by either a black plus or minus, indicating the sign of the loading. If a black
 minus or plus is outside of the interval for the null distribution, then it
-is 'significant'. The red bars indicate the 95% intervals for the index loading.
+is 'significant'. The red bars indicate the 90% intervals for the index loading.
 
 Figure \@ref(fig:pc1-loadings) clearly shows the problem of instability in our 
 PCs due to the overlap of the confidence intervals in variance explain for PC1
