@@ -510,7 +510,7 @@ onze_pca$rotation
 
 The values for PC1, for each original variable are negative. These indicate
 that increases in PC1 correspond to across-the-board decreases in all of 
-the original variables. If we look at the column for PC2, we see negative
+the original variables. If we look at the column for PC2, we see positive
 values for <span style="font-variant: small-caps;">dress</span> and 
 <span style="font-variant: small-caps;">trap</span>, but not for 
 <span style="font-variant: small-caps;">kit</span>. This means that higher
